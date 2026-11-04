@@ -1,0 +1,4 @@
+# Factory state stays on this machine: everything here is ignored except this file and README.md.
+*
+!.gitignore
+!README.md

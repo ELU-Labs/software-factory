@@ -1,0 +1,118 @@
+# Software factory roster: everyone who acts on teams/ (see factory/PROTOCOL.md).
+# Ids are what --as, to, cc and gate owners name. `factory` is reserved for automatic events.
+# `logo` (optional): draw a mark in the avatar instead of `short`: a vendor's (claude, openai or grok) or a shield.
+# `short` is the 2-character avatar label (PROTOCOL.md §2). If you change it, change the
+# roster test too (factory/test/project-lifecycle.test.mjs, "roster matches the contract table").
+members:
+  - id: you
+    name: Product owner
+    short: PO
+    kind: human
+    vendor: human
+    model: null
+    role: owner
+    color: "#111827"
+    runs: "The owner, via the board UI (writes as `you`) or `factory ... --as you`"
+  - id: fable
+    name: Fable
+    short: FB
+    kind: agent
+    vendor: anthropic
+    model: claude-fable-5-1
+    role: lead
+    color: "#D97757"
+    logo: claude
+    # The autopilot starts it as headless Claude Code (`claude -p`, auto mode) when it holds a turn.
+    launch: claude
+    runs: "Headless Claude Code (`claude -p`), started by `factory autopilot` when it holds a turn; or the owner's own session with skill /factory"
+  - id: opus-1
+    name: Opus 1
+    short: O1
+    kind: agent
+    vendor: anthropic
+    model: claude-opus-5-5
+    role: builder
+    color: "#C2410C"
+    runs: "Claude Code subagent type `builder`, spawned by fable with name opus-1"
+  - id: opus-2
+    name: Opus 2
+    short: O2
+    kind: agent
+    vendor: anthropic
+    model: claude-opus-5-5
+    role: builder
+    color: "#9A3412"
+    runs: "Claude Code subagent type `builder`, spawned by fable with name opus-2"
+  - id: opus-monitor
+    name: Opus Monitor
+    short: OM
+    kind: agent
+    vendor: anthropic
+    model: claude-opus-5-5
+    role: monitor
+    color: "#B45309"
+    runs: "Claude Code subagent type `monitor`, spawned by fable for watch runs"
+  - id: opus-solo
+    name: Opus Solo
+    short: OS
+    kind: agent
+    vendor: anthropic
+    model: claude-opus-5-5
+    # Claude Code --effort for its runs: low, medium, high, xhigh or max.
+    effort: xhigh
+    role: solo
+    color: "#BE123C"
+    # The autopilot starts it as headless Claude Code (`claude -p`).
+    launch: claude
+    runs: "Headless Claude Code (`claude -p`), started by `factory autopilot` when the owner asks it on a single-agent thread it leads"
+  - id: openai
+    name: OpenAI
+    short: OA
+    kind: agent
+    vendor: openai
+    # Set this to the model you run in the Codex CLI.
+    model: null
+    # Reasoning effort for the autopilot's Codex runs (null: ~/.codex/config.toml decides).
+    effort: xhigh
+    role: reviewer
+    color: "#10A37F"
+    logo: openai
+    # The autopilot starts it with the Codex CLI (`codex exec`).
+    launch: codex
+    runs: "Codex CLI in the repo root: started per turn by `factory autopilot` (`codex exec`), or by the owner"
+  - id: grok
+    name: Grok
+    short: GK
+    kind: agent
+    vendor: xai
+    # Set this to the model you run for the Grok bot.
+    model: null
+    role: gatekeeper
+    color: "#4B5563"
+    logo: grok
+    # No headless launch: the owner starts it from the board.
+    launch: null
+    runs: "Grok in the repo root with the owner's test and feedback tools, started by the owner"
+  - id: security
+    name: Security
+    short: SC
+    kind: agent
+    vendor: anthropic
+    model: claude-opus-5-5
+    # Claude Code --effort for its runs: low, medium, high, xhigh or max.
+    effort: high
+    role: security
+    color: "#7C3AED"
+    logo: shield
+    # The autopilot starts it as headless Claude Code (`claude -p`), read-only, when it holds a turn.
+    launch: claude
+    runs: "Headless Claude Code (`claude -p`, read-only), started by `factory autopilot` on the project threads whose security_review gate it owns"
+  - id: factory
+    name: Factory
+    short: FX
+    kind: system
+    vendor: system
+    model: null
+    role: system
+    color: "#9CA3AF"
+    runs: "The factory CLI; posts `event` messages automatically"

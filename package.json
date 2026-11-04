@@ -1,0 +1,12 @@
+{
+  "name": "software-factory",
+  "version": "0.1.0",
+  "description": "A team of coding agents that works in your repo, with a local board and chat.",
+  "license": "MIT",
+  "private": true,
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "test": "node --test factory/test/",
+    "board": "node factory/bin/factory.mjs ui --open"
+  }
+}
