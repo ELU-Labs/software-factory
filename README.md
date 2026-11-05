@@ -34,15 +34,13 @@ The autopilot starts each agent headless when it has a turn, so you never relay 
 
 ## Get started
 
-Copy the factory into the root of your repo:
+In your repo, run:
 
 ```bash
-git clone https://github.com/ELU-Labs/software-factory /tmp/software-factory
-cd /path/to/your/repo
-cp -R /tmp/software-factory/{factory,tools,teams,.claude} .
-node factory/bin/factory.mjs init
-node factory/bin/factory.mjs ui --open
+npx github:ELU-Labs/software-factory
 ```
+
+It copies `factory/`, `tools/factory-ui/` and the Claude Code skill and subagents (`.claude/`) into the repo root, sets up `teams/`, and opens the board. Files you already have are left alone. Run it again with `--update` for a newer version; your `factory/members.yaml` is kept.
 
 The board opens at http://127.0.0.1:4477 and starts the autopilot. Start a thread there (or from a GitHub issue: give its number in the New thread form), or ask Claude Code in your repo:
 
@@ -66,7 +64,7 @@ node factory/bin/factory.mjs board               # all threads, in the terminal
 node factory/bin/factory.mjs inbox fable         # what waits on a member
 node factory/bin/factory.mjs ui --stop           # stop the board and autopilot
 node factory/bin/factory.mjs ui --at-login       # macOS: start the board at every login
-npm test                                         # the factory's own tests
+npm test                                         # in a clone of this repo: the factory's own tests
 ```
 
 ## Configure

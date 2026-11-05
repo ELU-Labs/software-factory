@@ -5,6 +5,8 @@
   "license": "MIT",
   "private": true,
   "engines": { "node": ">=22" },
+  "bin": { "software-factory": "bin/install.mjs" },
+  "files": ["bin", "factory", "!factory/test", "tools", "!tools/factory-ui/seed-demo.mjs", ".claude", "README.md", "LICENSE"],
   "scripts": {
     "test": "node --test factory/test/",
     "board": "node factory/bin/factory.mjs ui --open"
