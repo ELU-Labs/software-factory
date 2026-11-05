@@ -48,7 +48,7 @@ The board opens at http://127.0.0.1:4477 and starts the autopilot. Start a threa
 /factory start a thread to add retries to failed payments
 ```
 
-The lead writes the brief and asks you to approve it. After that, answer what the board shows under **Needs you**. The tab title counts what waits on you, threads with news get a dot, and the bell at the bottom of the sidebar turns on a desktop notification for each new item.
+The lead writes the brief and asks you to approve it. After that, answer what the board shows under **Needs you**. The tab title counts what waits on you, threads with news get a dot, and the bell at the bottom of the sidebar turns on a desktop notification for each new item. Press ⌘K (Ctrl+K) to jump to any thread, team or view.
 
 The board also shows what agent runs cost: per thread in its Details, and today's total at the bottom of the sidebar. To step in yourself, **Continue in terminal** in a thread's Details copies the command that resumes an agent's session in Claude Code or Codex.
 

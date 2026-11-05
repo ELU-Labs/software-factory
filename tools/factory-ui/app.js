@@ -41,6 +41,7 @@
   };
   const clearHtml = (el) => setHtml(el, '');
   const uniq = (xs) => [...new Set(xs)];
+  const IS_MAC = /Mac|iPhone|iPad/.test(globalThis.navigator?.platform || globalThis.navigator?.userAgent || '');
   const plural = (n, w, p = `${w}s`) => `${n} ${n === 1 ? w : p}`;
   /** Text for one-line rows: drop inline Markdown markers (code ticks, emphasis). */
   const plain = (s) => String(s ?? '').replace(/`([^`]*)`/g, '$1').replace(/\*\*(.+?)\*\*/g, '$1').replace(/(^|\W)[*_](\S.*?)[*_](?=\W|$)/g, '$1$2');
@@ -86,6 +87,7 @@
     solo: '<circle cx="10" cy="6.75" r="3.25"/><path d="M4.25 16.75c.85-3.1 3-4.75 5.75-4.75s4.9 1.65 5.75 4.75"/>',
     board: '<rect x="2.75" y="3.25" width="4.25" height="13.5" rx="1.4"/><rect x="7.9" y="3.25" width="4.25" height="9.5" rx="1.4"/><rect x="13.05" y="3.25" width="4.25" height="6" rx="1.4"/>',
     tasks: '<path d="M8.5 5.5h8.5M8.5 10h8.5M8.5 14.5h8.5"/><path d="M3 5.6l1.3 1.3L6.4 4.6M3 10.1l1.3 1.3 2.1-2.3M3 14.6l1.3 1.3 2.1-2.3"/>',
+    search: '<circle cx="8.75" cy="8.75" r="5.25"/><path d="m12.75 12.75 4 4"/>',
     bell: '<path d="M5.25 8.5a4.75 4.75 0 0 1 9.5 0c0 3.6 1.5 5.25 1.5 5.25H3.75s1.5-1.65 1.5-5.25z"/><path d="M8.4 16.25a1.75 1.75 0 0 0 3.2 0"/>',
     inbox: '<path d="M3 11.5V15a1.5 1.5 0 0 0 1.5 1.5h11A1.5 1.5 0 0 0 17 15v-3.5"/><path d="M3 11.5 5.2 4.6a1.5 1.5 0 0 1 1.4-1.1h6.8a1.5 1.5 0 0 1 1.4 1.1L17 11.5h-4l-1 2H8l-1-2z"/>',
     project: '<path d="M4 7.5h12.5M3.5 12.5H16M8.5 3.5 7 16.5M13.5 3.5 12 16.5"/>',
@@ -177,6 +179,8 @@
     seenSince: LS.get('seenSince', null),
     /** What waited on you at the last refresh (keys), so a notification goes out only for what is new; null before the first. */
     waitingKeys: null,
+    /** The Cmd-K jump box while open: {q, i, items}. */
+    jump: null,
     waitingCount: 0,
     baseTitle: 'Software Factory',
     /** The answer to the Triage thread's observability offer ('yes' or 'no'); null until the owner picks. */
@@ -1049,6 +1053,7 @@
     paint($('#rail-top'), html`
       <div class="rail-head"><div class="brand">${LOGO}<div style="min-width:0"><div class="brand-name">Software Factory</div><div class="brand-root mono" title="${state.root}">${rootName}</div></div></div></div>
       <nav class="nav" aria-label="Views">
+        <button class="nav-item jump-open" type="button" data-act="jump-open" title="Jump to a thread, team or view">${icon('search')}<span>Jump to</span><kbd>${IS_MAC ? '⌘' : 'Ctrl+'}K</kbd></button>
         <a class="nav-item${r.name === 'board' ? ' on' : ''}" href="#/board">${icon('board')}<span>Board</span>${count(threads.filter((x) => x.kind === 'project' && x.phase !== 'done').length)}</a>
         <a class="nav-item${r.name === 'tasks' ? ' on' : ''}" href="#/tasks">${icon('tasks')}<span>Tasks</span>${count(openTasks)}</a>
         <a class="nav-item${r.name === 'inbox' ? ' on' : ''}" href="#/inbox">${icon('inbox')}<span>Inbox</span>${count(myTurns, myTurns ? 'hot' : '')}</a>
@@ -1325,6 +1330,82 @@
     }
     LS.set('notify', state.notify);
     renderRailFoot();
+  }
+
+  // ---- quick jump (Cmd-K) ------------------------------------------------------
+
+  const JUMP_MAX = 9;
+
+  /**
+   * What the jump box offers for a query: threads (those waiting on you first, then the latest),
+   * teams and the views. Every word typed must appear in the item's title, team or ref; a title
+   * that starts with the query ranks first.
+   */
+  function jumpItems(q) {
+    const words = String(q || '').trim().toLowerCase().split(/\s+/).filter(Boolean);
+    const threads = allThreads().map((th) => ({
+      title: th.title, sub: `${teamOf(th.team).title} · ${PHASE_LABEL[th.phase] || th.phase}`, href: threadHash(th.team, th.id),
+      ic: th.kind === 'watch' ? 'watch' : th.kind === 'solo' ? 'solo' : 'project', hay: `${th.title} ${th.team}/${th.id} ${teamOf(th.team).title}`,
+      waits: waitsOn(th, 'you'), updated: String(th.updated || ''),
+    })).sort((a, b) => Number(b.waits) - Number(a.waits) || b.updated.localeCompare(a.updated));
+    const teams = (state.board?.teams || []).map((t) => ({ title: t.title, sub: `Team · ${plural(t.threads.length, 'thread')}`, href: '#/board', team: t.id, ic: 'board', hay: `${t.title} ${t.id}` }));
+    const views = [['Board', '#/board', 'board'], ['Tasks', '#/tasks', 'tasks'], ['Inbox', '#/inbox', 'inbox']].map(([title, href, ic]) => ({ title, sub: 'View', href, ic, hay: title }));
+    if (!words.length) return [...threads, ...views].slice(0, JUMP_MAX);
+    const query = words.join(' ');
+    const rank = (x) => {
+      const hay = x.hay.toLowerCase();
+      if (!words.every((w) => hay.includes(w))) return -1;
+      const title = x.title.toLowerCase();
+      return title.startsWith(query) ? 0 : words.every((w) => title.includes(w)) ? 1 : 2;
+    };
+    return [...threads, ...teams, ...views].map((x) => ({ x, r: rank(x) })).filter((y) => y.r >= 0).sort((a, b) => a.r - b.r).map((y) => y.x).slice(0, JUMP_MAX);
+  }
+
+  function jumpList() {
+    const j = state.jump;
+    j.items = jumpItems(j.q);
+    j.i = Math.min(j.i, Math.max(0, j.items.length - 1));
+    if (!j.items.length) return html`<li class="jump-empty">Nothing matches.</li>`;
+    return j.items.map((x, i) => html`<li role="option" aria-selected="${String(i === j.i)}"><a class="jump-item${i === j.i ? ' on' : ''}" href="${x.href}" data-act="jump-go" data-i="${String(i)}">${icon(x.ic, 'sm')}<span class="jump-title">${x.title}</span><span class="jump-sub">${x.sub}</span></a></li>`);
+  }
+
+  function renderJump() {
+    let box = $('#jump');
+    if (!box) {
+      box = document.createElement('div');
+      box.id = 'jump';
+      document.body.appendChild(box);
+    }
+    if (!state.jump) return setHtml(box, '');
+    if (!$('#jump-input')) {
+      setHtml(box, html`<div class="modal-backdrop jump-backdrop" data-act="jump-close"><div class="jump" role="dialog" aria-modal="true" aria-label="Jump to">
+        <input class="field jump-input" id="jump-input" placeholder="Jump to a thread, team or view" autocomplete="off" spellcheck="false" aria-controls="jump-list">
+        <ul class="jump-list" id="jump-list" role="listbox"></ul>
+      </div></div>`);
+      $('#jump-input').focus();
+    }
+    setHtml($('#jump-list'), jumpList());
+  }
+
+  function openJump() {
+    if (state.newThread?.open) return;
+    state.jump = { q: '', i: 0, items: [] };
+    renderJump();
+  }
+
+  function closeJump() {
+    state.jump = null;
+    renderJump();
+  }
+
+  function jumpGo(x) {
+    if (x.team) {
+      state.boardTeam = x.team;
+      LS.set('boardTeam', x.team);
+    }
+    closeJump();
+    if (location.hash === x.href) render();
+    else location.hash = x.href;
   }
 
   /** Whether a thread has activity you have not seen in this browser: a last message, not yours, newer than your last look. */
@@ -2774,10 +2855,9 @@
 
   function composerFoot(v, d) {
     const label = d.replyTo ? 'Send reply' : 'Send';
-    const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
     const notify = myNotifyTurns(v).length;
     const nobody = !postTo(v.thread, d).length;
-    return html`<span class="c-hint"><kbd>${isMac ? '⌘' : 'Ctrl'}</kbd> <kbd>Enter</kbd> to send · Markdown works · drop or paste an image${nobody ? html` · <span class="c-warn">pick who to send it to</span>` : ''}${notify ? html` · <span title="Questions, answers, notes, escalations, events, alerts and reports addressed to you close on your next post, review or decision in the thread; an agent whose question your message left open asks again">sending closes ${plural(notify, 'turn')} waiting on you</span>` : ''}</span>
+    return html`<span class="c-hint"><kbd>${IS_MAC ? '⌘' : 'Ctrl'}</kbd> <kbd>Enter</kbd> to send · Markdown works · drop or paste an image${nobody ? html` · <span class="c-warn">pick who to send it to</span>` : ''}${notify ? html` · <span title="Questions, answers, notes, escalations, events, alerts and reports addressed to you close on your next post, review or decision in the thread; an agent whose question your message left open asks again">sending closes ${plural(notify, 'turn')} waiting on you</span>` : ''}</span>
       <button class="btn btn-primary" type="button" data-act="send"${state.sending ? raw(' disabled') : ''}>${icon('send', 'sm')}${label}</button>`;
   }
 
@@ -3080,6 +3160,18 @@
       case 'notify':
         toggleNotify();
         break;
+      case 'jump-open':
+        openJump();
+        break;
+      case 'jump-close':
+        if (e.target === el) closeJump();
+        break;
+      case 'jump-go': {
+        e.preventDefault();
+        const x = state.jump?.items?.[Number(el.dataset.i)];
+        if (x) jumpGo(x);
+        break;
+      }
       case 'theme':
         state.theme = state.theme === 'system' ? 'light' : state.theme === 'light' ? 'dark' : 'system';
         LS.set('theme', state.theme);
@@ -3330,6 +3422,12 @@
 
   document.addEventListener('input', (e) => {
     const el = e.target;
+    if (el.id === 'jump-input' && state.jump) {
+      state.jump.q = el.value;
+      state.jump.i = 0;
+      setHtml($('#jump-list'), jumpList());
+      return;
+    }
     if (el.dataset?.new && state.newThread) {
       setNew(el.dataset.new, el.value);
       state.newThread.error = '';
@@ -3451,6 +3549,31 @@
   });
 
   document.addEventListener('keydown', (e) => {
+    if ((IS_MAC ? e.metaKey : e.ctrlKey) && !e.shiftKey && !e.altKey && (e.key === 'k' || e.key === 'K')) {
+      e.preventDefault();
+      if (state.jump) closeJump();
+      else openJump();
+      return;
+    }
+    if (state.jump) {
+      const n = state.jump.items?.length || 0;
+      if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && n) {
+        e.preventDefault();
+        state.jump.i = (state.jump.i + (e.key === 'ArrowDown' ? 1 : n - 1)) % n;
+        setHtml($('#jump-list'), jumpList());
+        return;
+      }
+      if (e.key === 'Enter' && e.target?.id === 'jump-input') {
+        e.preventDefault();
+        const x = state.jump.items?.[state.jump.i];
+        if (x) jumpGo(x);
+        return;
+      }
+      if (e.key === 'Escape') {
+        closeJump();
+        return;
+      }
+    }
     if (e.key === 'Enter' && e.target?.id === 'nf-issue') {
       e.preventDefault();
       loadIssue();
@@ -3531,7 +3654,7 @@
   // factory/test/ui.test.mjs runs this file in a VM with `__factoryUiTest` set:
   // it gets the pure helpers below and the page never starts.
   if (globalThis.__factoryUiTest) {
-    Object.assign(globalThis.__factoryUiTest, { shownInChat, mdInline, md, rel, dayLabel, gateWait, waitingMembers, gateEntryTurns, pendingPoints, threadCtx, typeBlock, state, NOTIFY_TYPES, GATE_ENTRY, messageEntries, heldItems, permissionCard, allowEditor, offerCard, newForm, viewNew, sidePanel, usd, costRow, waitingOnYou, newlyWaiting, notifyWaiting, isUnread, markSeen, railTeams });
+    Object.assign(globalThis.__factoryUiTest, { shownInChat, mdInline, md, rel, dayLabel, gateWait, waitingMembers, gateEntryTurns, pendingPoints, threadCtx, typeBlock, state, NOTIFY_TYPES, GATE_ENTRY, messageEntries, heldItems, permissionCard, allowEditor, offerCard, newForm, viewNew, sidePanel, usd, costRow, waitingOnYou, newlyWaiting, notifyWaiting, isUnread, markSeen, railTeams, jumpItems });
     return;
   }
 

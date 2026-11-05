@@ -233,6 +233,24 @@ h1, h2, h3, h4, p { margin: 0; }
   color: var(--brand-ink);
 }
 .nav-item .count { margin-left: auto; }
+button.nav-item { width: 100%; background: none; font-family: inherit; cursor: pointer; text-align: left; }
+.nav-item kbd { margin-left: auto; font: 500 10.5px/1 var(--mono); color: var(--text-faint); }
+/* Jump to (Cmd-K) */
+.jump-backdrop { padding-top: 14vh; }
+.jump {
+  width: min(560px, 100%); display: grid; gap: 6px; padding: 8px;
+  border-radius: 14px; border: 1px solid var(--glass-border);
+  background: var(--surface); color: var(--text);
+  box-shadow: 0 24px 70px -20px #00000080;
+}
+.jump-input { height: 40px; font-size: 15px; }
+.jump-list { list-style: none; margin: 0; padding: 0; max-height: 60vh; overflow-y: auto; }
+.jump-item { display: flex; align-items: center; gap: 10px; min-height: 36px; padding: 6px 10px; border-radius: 8px; color: var(--text); text-decoration: none; }
+.jump-item .ic { color: var(--text-faint); flex: none; }
+.jump-item.on, .jump-item:hover { background: var(--hover); }
+.jump-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jump-sub { flex: none; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--text-faint); }
+.jump-empty { padding: 10px; font-size: 13px; color: var(--text-faint); }
 
 .rail-label {
   display: block;
