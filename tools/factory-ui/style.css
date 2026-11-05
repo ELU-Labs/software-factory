@@ -1070,6 +1070,8 @@ a.turn-more { color: inherit; text-decoration: underline; text-underline-offset:
 .gate-strip .btn { flex: none; }
 .gate-strip .gtext strong { font-weight: 620; }
 .gate-strip .gtext .faint { font-size: 12px; }
+/* Why the gate cannot be approved yet: its own line under the buttons, never cut off. */
+.gate-strip .gate-hold { flex: 1 0 100%; margin: 0; padding-left: 22px; font-size: 12px; line-height: 1.6; color: var(--text-muted); }
 .c-top { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; }
 .c-label { font: 500 11px/1 var(--mono); color: var(--text-faint); }
 .to-chip {

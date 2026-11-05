@@ -17,6 +17,7 @@ import { spawn } from 'node:child_process';
 import { startServer, boardAccess } from '../../tools/factory-ui/server.mjs';
 import { seedDemo } from '../../tools/factory-ui/seed-demo.mjs';
 import { openStore, NOTICE_TYPES, REVIEW_GATES, parseFactoryCommand, pidAlive } from '../lib/store.mjs';
+import { projectCtx, driveTo as driveThread } from './helpers.mjs';
 
 const UI_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../tools/factory-ui');
 
@@ -671,6 +672,47 @@ test('page composer: review points with text go out only with a verdict, and onl
   assert.equal(pendingPoints(mine, d).length, 1);
   assert.equal(pendingPoints({ ...mine, phase: 'design' }, d).length, 0);
   assert.equal(pendingPoints({ ...mine, gates: { brief: { by: 'openai', status: 'pending' } } }, d).length, 0);
+});
+
+test('page gate bar: sign-off waits on the lead while an issue is untriaged, then offers Approve', async (t) => {
+  const ctx = await projectCtx(t);
+  const { store, ref } = ctx;
+  await driveThread(ctx, ref, 'signoff');
+  await store.createIssue({ as: 'grok', ref, severity: 'low', title: 'Untriaged finding' });
+  await store.createIssue({ as: 'grok', ref, severity: 'nit', title: 'Another one' });
+  const hooks = loadPage();
+  const view = async () => JSON.parse(JSON.stringify(await store.threadView(ref)));
+  hooks.state.route = { view: 'thread', ref, tab: 'chat' };
+  hooks.state.thread = await view();
+  const held = hooks.untriagedIssues(hooks.state.thread);
+  assert.equal(held.length, 2);
+  const [a, b] = held.map((i) => i.id);
+  const lead = /^(.+) has to accept/.exec(hooks.signoffHold(hooks.state.thread))?.[1];
+  assert.ok(lead && lead !== 'You', hooks.signoffHold(hooks.state.thread));
+  assert.equal(hooks.signoffHold(hooks.state.thread), `${lead} has to accept, reject or defer ${a} and ${b} before you can sign off.`);
+
+  const bar = String(hooks.gateStrip(hooks.state.thread.thread, hooks.draft(ref)));
+  assert.match(bar, new RegExp(`<span class="faint">Waiting on ${lead}</span>`));
+  // The reason is its own line under the buttons, so a narrow bar never cuts it off.
+  assert.match(bar, new RegExp(`<p class="gate-hold">${lead} has to accept, reject or defer <button type="button" class="ref open" data-act="ref" data-ref="${a}"[^>]*>${a}</button> and <button[^>]*data-ref="${b}"[^>]*>${b}</button> before you can sign off\\.</p>`));
+  assert.match(bar, new RegExp(`data-verdict="approve" disabled title="${lead} has to accept, reject or defer ${a} and ${b} before you can sign off\\."`));
+  assert.doesNotMatch(bar, /data-verdict="changes_requested" disabled/, 'Request changes stays available');
+  // The store refuses the same approval, so the bar and the store agree.
+  assert.throws(() => store.review({ as: 'you', ref, verdict: 'approve', points: [] }), (e) => e.code === 'conflict');
+
+  // A bar painted for another thread never borrows this one's issues.
+  assert.doesNotMatch(String(hooks.gateStrip({ ...hooks.state.thread.thread, id: 'other' }, hooks.draft(ref))), /disabled/);
+
+  // Once the lead has answered both, the bar offers Approve again.
+  await store.deferIssue({ as: 'fable', issue: `checkout/${a}`, reason: 'Next release' });
+  hooks.state.thread = await view();
+  assert.match(String(hooks.gateStrip(hooks.state.thread.thread, hooks.draft(ref))), new RegExp(`or defer <button[^>]*data-ref="${b}"[^>]*>${b}</button> before`), 'one left reads as one');
+  await store.rejectIssue({ as: 'fable', issue: `checkout/${b}`, reason: 'Not a problem' });
+  hooks.state.thread = await view();
+  assert.deepEqual(hooks.untriagedIssues(hooks.state.thread), []);
+  const after = String(hooks.gateStrip(hooks.state.thread.thread, hooks.draft(ref)));
+  assert.doesNotMatch(after, /disabled|Waiting on|gate-hold/);
+  assert.match(after, /<span class="faint">Pending/);
 });
 
 test('the hidden attribute wins over component display rules', () => {

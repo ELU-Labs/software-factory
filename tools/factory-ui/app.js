@@ -43,6 +43,8 @@
   const uniq = (xs) => [...new Set(xs)];
   const IS_MAC = /Mac|iPhone|iPad/.test(globalThis.navigator?.platform || globalThis.navigator?.userAgent || '');
   const plural = (n, w, p = `${w}s`) => `${n} ${n === 1 ? w : p}`;
+  /** "a", "a and b", "a, b and c"; items may be html`` fragments. */
+  const andList = (xs) => xs.flatMap((x, i) => [i === 0 ? '' : i === xs.length - 1 ? ' and ' : ', ', x]);
   /** Text for one-line rows: drop inline Markdown markers (code ticks, emphasis). */
   const plain = (s) => String(s ?? '').replace(/`([^`]*)`/g, '$1').replace(/\*\*(.+?)\*\*/g, '$1').replace(/(^|\W)[*_](\S.*?)[*_](?=\W|$)/g, '$1$2');
 
@@ -3030,6 +3032,23 @@ ${sc.body}">${icon('clock', 'xs')}<span class="sched-what">${what}</span>
     return th.kind === 'project' && REVIEW_GATES.includes(th.phase) && th.gates?.[th.phase]?.by === 'you';
   }
 
+  /**
+   * The thread's issues still `open` at sign-off. The store refuses a sign-off
+   * until the lead accepts, rejects or defers each one, so the gate bar waits on
+   * the lead instead of offering an Approve that would fail.
+   */
+  function untriagedIssues(v) {
+    const th = v?.thread;
+    if (th?.kind !== 'project' || th.phase !== 'signoff') return [];
+    return (v.issues || []).filter((i) => i.thread === th.id && i.status === 'open');
+  }
+
+  /** Why sign-off cannot be approved yet, or '' when it can. */
+  function signoffHold(v) {
+    const held = untriagedIssues(v);
+    return held.length ? `${displayName(v.thread.lead, v.thread)} has to accept, reject or defer ${andList(held.map((i) => i.id)).join('')} before you can sign off.` : '';
+  }
+
   function renderComposer(v) {
     const box = $('#composer');
     const ref = state.route.ref;
@@ -3096,14 +3115,20 @@ ${sc.body}">${icon('clock', 'xs')}<span class="sched-what">${what}</span>
     if (!ownsGate(th)) return skipStrip(th);
     const g = PHASE_LABEL[th.phase];
     const gate = th.gates[th.phase];
+    const v = state.thread?.team === th.team && state.thread?.thread?.id === th.id ? state.thread : null;
+    const held = untriagedIssues(v);
+    const hold = signoffHold(v);
+    const lead = displayName(th.lead, th);
+    const refs = andList(held.map((i) => html`<button type="button" class="ref open" data-act="ref" data-ref="${i.id}" title="${i.id} (${i.severity}): ${i.title}">${i.id}</button>`));
     return html`<div class="gate-strip">
-      <span class="gtext">${icon('shield', 'sm')}<span><strong>You own the ${g} gate.</strong> <span class="faint">${GATE_STATUS[gate.status]}${gate.at ? ` · ${rel(gate.at)}` : ''}</span></span></span>
+      <span class="gtext">${icon('shield', 'sm')}<span${hold ? html` title="${hold}"` : ''}><strong>You own the ${g} gate.</strong> <span class="faint">${held.length ? `Waiting on ${lead}` : html`${GATE_STATUS[gate.status]}${gate.at ? ` · ${rel(gate.at)}` : ''}`}</span></span></span>
       ${state.route.tab === 'doc'
         ? html`<a class="btn btn-ghost sm" href="${threadHash(th.team, th.id)}">${icon('chat', 'sm')}Back to the chat</a>`
         : html`<a class="btn btn-ghost sm" href="${threadHash(th.team, th.id, '?tab=doc')}">${icon('doc', 'sm')}Read the ${th.phase === 'brief' ? 'brief' : 'thread doc'}</a>`}
       <button class="btn btn-ghost sm" type="button" data-act="add-point">${icon('plus', 'sm')}Point</button>
       <button class="btn btn-outline sm" type="button" data-act="review" data-verdict="changes_requested"${state.sending ? raw(' disabled') : ''}>Request changes</button>
-      <button class="btn btn-primary sm" type="button" data-act="review" data-verdict="approve"${state.sending ? raw(' disabled') : ''}>${icon('check', 'sm')}Approve ${g.toLowerCase()}</button>
+      <button class="btn btn-primary sm" type="button" data-act="review" data-verdict="approve"${state.sending || hold ? raw(' disabled') : ''}${hold ? html` title="${hold}"` : ''}>${icon('check', 'sm')}Approve ${g.toLowerCase()}</button>
+      ${held.length ? html`<p class="gate-hold">${lead} has to accept, reject or defer ${refs} before you can sign off.</p>` : ''}
     </div>`;
   }
 
@@ -3262,6 +3287,7 @@ ${sc.body}">${icon('clock', 'xs')}<span class="sched-what">${what}</span>
     try {
       if (kind === 'approve' || kind === 'changes_requested') {
         const pts = d.points.filter((p) => p.text.trim());
+        if (kind === 'approve' && signoffHold(v)) throw new Error(signoffHold(v));
         if (kind === 'approve' && pts.some((p) => p.severity === 'high' || p.severity === 'medium')) {
           throw new Error('Approve carries only low or nit points. Use Request changes for high or medium points.');
         }
@@ -4160,7 +4186,7 @@ ${sc.body}">${icon('clock', 'xs')}<span class="sched-what">${what}</span>
   // factory/test/ui.test.mjs runs this file in a VM with `__factoryUiTest` set:
   // it gets the pure helpers below and the page never starts.
   if (globalThis.__factoryUiTest) {
-    Object.assign(globalThis.__factoryUiTest, { shownInChat, mdInline, md, rel, dayLabel, gateWait, waitingMembers, gateEntryTurns, pendingPoints, threadCtx, typeBlock, state, NOTIFY_TYPES, GATE_ENTRY, messageEntries, heldItems, permissionCard, allowEditor, offerCard, newForm, viewNew, sidePanel, usd, costRow, waitingOnYou, newlyWaiting, notifyWaiting, isUnread, markSeen, railTeams, jumpItems, parseDiff, diffView, notesMessage, notesRequest, threadHead, railRunning, scheduleChip, scheduleRow, composerFoot, everyText, everyShort, nextText, messageItem, draft, threadCard, commandText, runnable });
+    Object.assign(globalThis.__factoryUiTest, { shownInChat, mdInline, md, rel, dayLabel, gateWait, waitingMembers, gateEntryTurns, pendingPoints, threadCtx, typeBlock, state, NOTIFY_TYPES, GATE_ENTRY, messageEntries, heldItems, permissionCard, allowEditor, offerCard, newForm, viewNew, sidePanel, usd, costRow, waitingOnYou, newlyWaiting, notifyWaiting, isUnread, markSeen, railTeams, jumpItems, parseDiff, diffView, notesMessage, notesRequest, threadHead, railRunning, scheduleChip, scheduleRow, composerFoot, everyText, everyShort, nextText, messageItem, draft, threadCard, commandText, runnable, gateStrip, untriagedIssues, signoffHold });
     return;
   }
 
