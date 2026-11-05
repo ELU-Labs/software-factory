@@ -49,7 +49,8 @@ const turns = JSON.parse(spawnSync(process.execPath, [cli, 'inbox', me, '--json'
 for (const t of turns) {
   spawnSync(process.execPath, [cli, 'post', t.team + '/' + t.thread, '--type', 'answer', '--reply-to', t.message.id, '--to', 'you', '--body', 'Checked 12 conversations; 2 eval candidates.', '--root', root], { encoding: 'utf8' });
 }
-console.log(JSON.stringify({ type: 'result', subtype: 'success', session_id: session, total_cost_usd: 0.123456, result: 'Answered ' + turns.length + ' request(s).' }));
+// Claude Code reports a resumed session's running total: 0.123456 for the first run, 0.2 after the second.
+console.log(JSON.stringify({ type: 'result', subtype: 'success', session_id: session, total_cost_usd: argv.includes('--resume') ? 0.2 : 0.123456, result: 'Answered ' + turns.length + ' request(s).' }));
 `);
   fs.chmodSync(bin, 0o755);
   const calls = path.join(dir, 'calls.jsonl');
@@ -332,8 +333,10 @@ test('autopilot: a question to the agent starts headless Claude with the thread\
   assert.match(second.at(-1), /Re-read its Instructions/);
   // Each finished run lands in the cost ledger the board totals.
   const ledger = fs.readFileSync(path.join(root, 'teams', '.autopilot', 'costs.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
-  assert.deepEqual(ledger.map((x) => [x.member, x.ref, x.outcome, x.cost_usd]), [['opus-solo', REF, 'answered', 0.1235], ['opus-solo', REF, 'answered', 0.1235]]);
-  assert.deepEqual(openStore({ root }).threadView(REF).cost, { usd: 0.247, runs: 2, unpriced: 0 });
+  // Each line holds its run's own cost: the second run resumed the session, which then reported 0.2 in all.
+  assert.deepEqual(ledger.map((x) => [x.member, x.ref, x.outcome, x.cost_usd, x.session, x.session_usd]), [['opus-solo', REF, 'answered', 0.1235, session, 0.1235], ['opus-solo', REF, 'answered', 0.0765, session, 0.2]]);
+  assert.deepEqual(openStore({ root }).threadView(REF).cost, { usd: 0.2, runs: 2, unpriced: 0 });
+  assert.equal(openStore({ root }).autopilot().members['opus-solo'].last.cost_usd, 0.0765);
 
   const dry = runCli(['autopilot', '--dry-run'], { root, env: fake.env() });
   assert.match(dry.stdout, /opus-solo: nothing to do/);

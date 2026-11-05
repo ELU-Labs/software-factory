@@ -1133,8 +1133,9 @@
     ];
     const costs = b.costs;
     return html`
-      <div class="rail-label run-head"><span>Running</span>${count(agents)}<span class="run-sub">${agents === 1 ? 'agent' : 'agents'}</span>${costs?.since ? html`<span class="run-cost" title="What agent runs cost today: ${costTip(costs.today)}">${usd(costs.today.usd)} today</span>` : ''}</div>
-      ${agentRows.length ? agentRows : html`<div class="run-row empty">No agent is working now</div>`}`;
+      <div class="rail-label run-head"><span>Running</span>${count(agents)}<span class="run-sub">${agents === 1 ? 'agent' : 'agents'}</span></div>
+      ${agentRows.length ? agentRows : html`<div class="run-row empty">No agent is working now</div>`}
+      ${costs?.since ? html`<div class="run-cost" title="What today's agent runs would cost at API prices: ${costTip(costs.today)}">${usd(costs.today.usd)} today at API prices</div>` : ''}`;
   }
 
   async function procAction(body) {
@@ -1242,9 +1243,9 @@
 
   /** A cost total ({usd, runs, unpriced}, store.costs) as dollars, and what it covers. */
   const usd = (n) => `$${(Number(n) || 0).toFixed(2)}`;
-  const costTip = (c) => `${plural(c.runs, 'agent run')}${c.unpriced ? `; ${c.unpriced} reported no cost (Codex runs report none)` : ''}`;
+  const costTip = (c) => `${plural(c.runs, 'agent run')}${c.unpriced ? `; ${c.unpriced} reported no cost (Codex runs report none)` : ''}. Each run's own cost, from what Claude Code reports; your plan may bill differently`;
   /** A thread's Cost row for its Details panel. */
-  const costRow = (c) => html`<dt>Cost</dt><dd class="mono" title="${c ? costTip(c) : ''}">${c ? `${usd(c.usd)} · ${plural(c.runs, 'run')}` : 'no runs yet'}</dd>`;
+  const costRow = (c) => html`<dt>Cost</dt><dd class="mono" title="${c ? costTip(c) : ''}">${c ? html`${usd(c.usd)} · ${plural(c.runs, 'run')} <span class="faint">at API prices</span>` : 'no runs yet'}</dd>`;
 
   function renderRailFoot() {
     const foot = $('#rail-foot');

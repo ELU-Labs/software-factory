@@ -96,7 +96,11 @@ export const PRESENCE_DIR = '.presence';
 export const PRESENCE_STATES = Object.freeze(['watching', 'working', 'idle']);
 /** teams/.autopilot/: the autopilot's state.json, its log and one log per agent run (PROTOCOL §16, "Autopilot"). */
 export const AUTOPILOT_DIR = '.autopilot';
-/** teams/.autopilot/costs.jsonl: one line per finished agent run ({at, member, ref, outcome, cost_usd}), appended by the autopilot. */
+/**
+ * teams/.autopilot/costs.jsonl: one line per finished agent run ({at, member, ref, outcome, cost_usd, session,
+ * session_usd}), appended by the autopilot. cost_usd is that run's own cost at API prices (null: it reported none);
+ * session_usd the running total its session reported.
+ */
 export const COSTS_FILE = 'costs.jsonl';
 /** teams/.archive/<team>-<stamp>/: archived teams, moved out whole by `team archive` (PROTOCOL §3). */
 export const ARCHIVE_DIR = '.archive';

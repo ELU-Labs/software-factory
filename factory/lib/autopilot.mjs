@@ -337,6 +337,150 @@ function claudeResult(text) {
   return null;
 }
 
+/** Dollars to 4 places, as a run's cost is reported. */
+const round4 = (n) => Math.round(n * 10000) / 10000;
+
+/** A run log's start (its name begins with the time it started), in ms; NaN for another name. */
+function logStart(name) {
+  const m = /^(\d{4})(\d\d)(\d\d)T(\d\d)(\d\d)(\d\d)\.(\d{3})Z-/.exec(name);
+  return m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6], +m[7]) : NaN;
+}
+
+/** The end of a file: a run log's result line is its last line, and a log can be megabytes long. */
+function readTail(file, size = 262144) {
+  const fd = fs.openSync(file, 'r');
+  try {
+    const len = fs.fstatSync(fd).size;
+    const n = Math.min(size, len);
+    const buf = Buffer.alloc(n);
+    fs.readSync(fd, buf, 0, n, len - n);
+    return buf.toString('utf8');
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/**
+ * The finished Claude runs whose logs are in teams/.autopilot/runs, oldest first:
+ * [{log, member, session, total}], total being what the run reported (a resumed
+ * session reports its running total, every earlier run of it included).
+ */
+function reportedTotals(root) {
+  const dir = path.join(autopilotDir(root), 'runs');
+  let names;
+  try {
+    names = fs.readdirSync(dir).filter((n) => n.endsWith('.log')).sort();
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const log of names) {
+    let r = null;
+    try {
+      r = claudeResult(readTail(path.join(dir, log)));
+    } catch {
+      continue;
+    }
+    const member = /^\d{8}T\d{6}\.\d{3}Z-[0-9a-f]*-(.+)\.log$/.exec(log)?.[1];
+    if (!member || typeof r?.session_id !== 'string' || typeof r.total_cost_usd !== 'number' || !Number.isFinite(r.total_cost_usd)) continue;
+    out.push({ log, member, session: r.session_id, total: round4(r.total_cost_usd) });
+  }
+  return out;
+}
+
+/** The cost ledger's lines (teams/.autopilot/costs.jsonl), skipping any that do not parse. */
+function readLedger(root) {
+  let text;
+  try {
+    text = fs.readFileSync(path.join(autopilotDir(root), COSTS_FILE), 'utf8');
+  } catch {
+    return [];
+  }
+  return text.split('\n').flatMap((l) => {
+    try {
+      const r = JSON.parse(l);
+      return r && typeof r === 'object' ? [r] : [];
+    } catch {
+      return [];
+    }
+  });
+}
+
+/**
+ * What one run cost on its own, from the total it reported. Claude Code reports a
+ * resumed session's running total, so a run's own cost is that total less the
+ * session's total when its previous run ended: from the ledger, else from that
+ * run's log. null when the run reported no cost, or resumed a session whose
+ * earlier total is nowhere to be found (counting it whole would count earlier runs again).
+ */
+export function ownCost(root, { total, session, resumed, log }) {
+  if (total == null) return null;
+  if (!session) return total;
+  let before = null;
+  for (const row of readLedger(root)) if (row.session === session && typeof row.session_usd === 'number') before = row.session_usd;
+  if (before == null) {
+    const name = path.basename(String(log || ''));
+    before = reportedTotals(root).filter((x) => x.session === session && x.log < name).at(-1)?.total ?? null;
+  }
+  if (before == null) return resumed ? null : total;
+  return total >= before ? round4(total - before) : total;
+}
+
+/**
+ * Ledger lines written before runs were priced on their own (no session_usd) hold
+ * their session's running total. Each is rewritten from its run's log with the
+ * run's own cost, its session and that total; a line whose log is gone stays as
+ * it was. Members' last and by_thread runs (which can predate the ledger) are
+ * corrected the same way. Returns how many lines changed.
+ */
+export function repairCostLedger(root, members = {}) {
+  const file = path.join(autopilotDir(root), COSTS_FILE);
+  let text;
+  try {
+    text = fs.readFileSync(file, 'utf8');
+  } catch {
+    return 0;
+  }
+  const lines = text.split('\n').filter((l) => l.trim());
+  const rows = lines.map((l) => {
+    try {
+      const r = JSON.parse(l);
+      return r && typeof r === 'object' && !Array.isArray(r) ? r : null;
+    } catch {
+      return null;
+    }
+  });
+  if (!rows.some((r) => r && !('session_usd' in r))) return 0;
+  const runs = reportedTotals(root);
+  // The run a recorded total came from (the same member and total, started before it ended), priced on its own.
+  const price = (member, cost, endedAt) => {
+    if (typeof cost !== 'number') return null;
+    const at = Date.parse(endedAt);
+    const run = runs.filter((x) => x.member === member && x.total === cost && logStart(x.log) <= at).at(-1);
+    if (!run) return null;
+    const before = runs.filter((x) => x.session === run.session && x.log < run.log).at(-1)?.total;
+    return { own: before != null && run.total >= before ? round4(run.total - before) : run.total, session: run.session, total: run.total };
+  };
+  let changed = 0;
+  const out = rows.map((r, i) => {
+    if (!r || 'session_usd' in r) return lines[i];
+    const p = price(r.member, r.cost_usd, r.at);
+    if (p && p.own !== r.cost_usd) changed += 1;
+    return JSON.stringify({ ...r, cost_usd: p ? p.own : r.cost_usd, session: p?.session ?? null, session_usd: p?.total ?? null });
+  });
+  writeAtomic(file, `${out.join('\n')}\n`);
+  for (const [id, m] of Object.entries(members)) {
+    if (!m || typeof m !== 'object') continue;
+    const fix = (x) => {
+      const p = x && typeof x === 'object' ? price(id, x.cost_usd, x.ended_at) : null;
+      return p ? { ...x, cost_usd: p.own } : x;
+    };
+    if (m.last) m.last = fix(m.last);
+    if (m.by_thread && typeof m.by_thread === 'object') m.by_thread = Object.fromEntries(Object.entries(m.by_thread).map(([ref, x]) => [ref, fix(x)]));
+  }
+  return changed;
+}
+
 /** Text of a run's final message, at most 600 chars. */
 const clip = (s) => String(s || '').trim().slice(0, 600);
 
@@ -800,6 +944,14 @@ export function startAutopilot({ root, once = false, dryRun = false, settleMs = 
       }
     }
   }
+  if (!dryRun) {
+    try {
+      const n = repairCostLedger(root, state.members);
+      if (n) log(`corrected ${n} cost ledger line${n === 1 ? '' : 's'}: each holds its run's own cost now, not its session's running total`);
+    } catch (err) {
+      log(`could not correct the cost ledger: ${err.message}`);
+    }
+  }
   let saved = null;
   const save = () => {
     // Never write into a repo that is gone: the write would recreate its folder.
@@ -849,7 +1001,15 @@ export function startAutopilot({ root, once = false, dryRun = false, settleMs = 
     if (run.adopted && code === null && !signal) code = l.exitIn?.(text, run.lastFile) ?? null;
     const outcome = stopping ? 'stopped' : r.timed_out ? 'timed_out' : code !== 0 ? 'failed' : left.length ? 'left_open' : 'answered';
     const said = l.saidIn(text, run.lastFile);
-    const cost = l.costIn(text);
+    // What the run reported (a resumed Claude session reports its running total) and what it cost on its own.
+    const reported = l.costIn(text);
+    const reportedSession = l.sessionIn(text) || null;
+    let cost = reported;
+    try {
+      cost = ownCost(root, { total: reported, session: reportedSession, resumed: Boolean(r.session) && reportedSession === r.session, log: r.log });
+    } catch (err) {
+      log(`could not price ${id}'s run on ${r.ref} on its own: ${err.message}`);
+    }
     const denied = outcome === 'stopped' ? [] : (l.deniedIn?.(text) || []);
     if (denied.length) {
       // A refused command never prompts in a headless run: put a permission card in front of the owner instead.
@@ -877,8 +1037,9 @@ export function startAutopilot({ root, once = false, dryRun = false, settleMs = 
     }
     m.last = { ref: r.ref, turns: r.turns, started_at: r.started_at, ended_at: iso(), exit_code: code, signal: signal || null, outcome, left_open: left, log: r.log, said, session, bin: r.bin, cost_usd: cost, denied: denied.length };
     // The cost ledger the board totals per thread and per day (store.costs); a run that reports no cost is counted too.
+    // cost_usd is the run's own cost; session_usd the session's total it reported, which prices the session's next run.
     try {
-      fs.appendFileSync(path.join(autopilotDir(root), COSTS_FILE), `${JSON.stringify({ at: m.last.ended_at, member: id, ref: r.ref, outcome, cost_usd: cost })}\n`);
+      fs.appendFileSync(path.join(autopilotDir(root), COSTS_FILE), `${JSON.stringify({ at: m.last.ended_at, member: id, ref: r.ref, outcome, cost_usd: cost, session: reportedSession, session_usd: reported })}\n`);
     } catch (err) {
       log(`could not record the cost of ${id}'s run on ${r.ref}: ${err.message}`);
     }
