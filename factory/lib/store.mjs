@@ -2228,7 +2228,16 @@ class Store {
     if (exists) commands = [`git -C ${root} fetch origin main`, `git -C ${root} worktree add ${w} ${b}`];
     else if (remote) commands = [`git -C ${root} fetch origin main ${b}`, `git -C ${root} worktree add --track -b ${b} ${w} ${shellQuote(`origin/${branch}`)}`];
     else commands = [`git -C ${root} fetch origin main`, `git -C ${root} worktree add ${w} -b ${b} origin/main`];
-    return { branch, path: wt, exists, remote, commands, note: 'The shared checkout never leaves main: build in the worktree, never switch branches in the shared checkout.' };
+    // The team's setup (team.md `setup`, one command line such as `npm ci`) runs once in the new worktree.
+    const setup = this._teamSetup(th.team);
+    if (setup) commands.push(`cd ${w} && ${setup}`);
+    return { branch, path: wt, exists, remote, commands, setup, note: 'The shared checkout never leaves main: build in the worktree, never switch branches in the shared checkout.' };
+  }
+
+  /** A team's worktree setup command (team.md `setup`), or null. */
+  _teamSetup(team) {
+    const v = this.team(team).setup;
+    return typeof v === 'string' && v.trim() && !/[\r\n]/.test(v) ? v.trim() : null;
   }
 
   // ---- writes: setup -------------------------------------------------------
@@ -2811,7 +2820,7 @@ class Store {
    * thread, so this posts no event (like `team new`); the change is in team.md.
    * `dataSources` maps usage|traces|latency|feedback to text (or null to clear).
    */
-  editTeam({ as, id, eval_cmd: evalCmd, grader, dataSources, repoPaths, allow, allowAdd, allowRemove, clearAllow } = {}) {
+  editTeam({ as, id, eval_cmd: evalCmd, grader, setup, dataSources, repoPaths, allow, allowAdd, allowRemove, clearAllow } = {}) {
     this._actor(as);
     const t = this.team(id);
     if (as !== 'you' && as !== t.lead) fail('permission', `only you or the team lead (${t.lead}) can change team ${id}; ${as} cannot`);
@@ -2826,8 +2835,9 @@ class Store {
       fail('usage', 'change the team\'s allowed commands one way: --allow (replaces the list), --add-allow / --remove-allow, or --clear-allow');
     }
     const allowGiven = replaceAllow || clearAllow || addList.length > 0 || removeList.length > 0;
-    if (evalCmd === undefined && grader === undefined && !Object.keys(ds).length && repoPaths === undefined && !allowGiven) {
-      fail('usage', 'say what to change: --eval-cmd, --grader, --data-source <usage|traces|latency|feedback>=<text>, --repo-paths a,b, or the commands its single-agent threads may run (--allow / --add-allow / --remove-allow / --clear-allow)');
+    if (setup != null && /[\r\n]/.test(String(setup))) fail('usage', '--setup is one command line; chain steps with &&');
+    if (evalCmd === undefined && grader === undefined && setup === undefined && !Object.keys(ds).length && repoPaths === undefined && !allowGiven) {
+      fail('usage', 'say what to change: --eval-cmd, --grader, --setup <usage|traces|latency|feedback>=<text>, --repo-paths a,b, or the commands its single-agent threads may run (--allow / --add-allow / --remove-allow / --clear-allow)');
     }
     return this._op(id, as, () => {
       const cur = this.team(id);
@@ -2836,6 +2846,7 @@ class Store {
       const changed = [];
       if (evalCmd !== undefined) { data.eval_cmd = blank(evalCmd); changed.push('eval_cmd'); }
       if (grader !== undefined) { data.grader = blank(grader); changed.push('grader'); }
+      if (setup !== undefined) { data.setup = blank(setup)?.trim() || null; changed.push('setup'); }
       if (Object.keys(ds).length) {
         const prev = isObject(data.data_sources) ? data.data_sources : {};
         data.data_sources = Object.fromEntries(DATA_SOURCE_KEYS.map((k) => [k, k in ds ? blank(ds[k]) : prev[k] ?? null]));
@@ -4356,6 +4367,7 @@ class Store {
       if (!isMember(t.team.lead)) E(f, `lead "${t.team.lead}" is not on the roster`);
       if (t.team.eval_cmd != null && typeof t.team.eval_cmd !== 'string') E(f, 'eval_cmd must be a shell command string or null');
       if (t.team.grader != null && typeof t.team.grader !== 'string') E(f, 'grader must be a string or null');
+      if (t.team.setup != null && (typeof t.team.setup !== 'string' || /[\r\n]/.test(t.team.setup))) E(f, 'setup must be one command line (chain steps with &&) or null');
       if ('data_sources' in t.team && !isObject(t.team.data_sources)) E(f, 'data_sources must be a mapping {usage, traces, latency, feedback}');
       else if (isObject(t.team.data_sources)) {
         const ds = t.team.data_sources;

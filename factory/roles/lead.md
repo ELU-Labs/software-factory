@@ -103,7 +103,7 @@ Without `roles`, the defaults below hold: `openai` pairs and reviews, `grok` che
   `node factory/bin/factory.mjs thread edit <thread-ref> --section Plan --body-file <file> --as fable`
 - [ ] Create the tasks. Body = description, then a `## Acceptance` list that includes the exact checks to run.
   `node factory/bin/factory.mjs task new <thread-ref> --title "<title>" --body-file <file> --as fable`
-- [ ] Create the worktree: `node factory/bin/factory.mjs worktree <thread-ref>`, then run the git commands it prints, exactly as printed.
+- [ ] Create the worktree: `node factory/bin/factory.mjs worktree <thread-ref>`, then run the commands it prints (git, then the team's setup when it has one), exactly as printed.
 - [ ] Set `build` again from the tasks you planned: the rounds the builders run, plus your review of each result:
   `node factory/bin/factory.mjs thread eta <thread-ref> --eta build=<time> --as fable`
 - [ ] `node factory/bin/factory.mjs advance <thread-ref> --as fable`

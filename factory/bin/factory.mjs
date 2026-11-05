@@ -37,7 +37,7 @@ const VALUE_FLAGS = new Set([
   'root', 'as', 'title', 'lead', 'owner', 'members', 'kind', 'cadence', 'threshold', 'section', 'body', 'body-file', 'type',
   'to', 'cc', 'reply-to', 'resolves', 'refs', 'verdict', 'point', 'points-file', 'review', 'stance', 'stances-file', 'outcome',
   'reason', 'severity', 'source', 'metric', 'action', 'note', 'gate', 'metrics', 'metrics-file', 'from', 'limit', 'status',
-  'team', 'phase', 'port', 'host', 'allow-host', 'issue', 'thread', 'clear-threshold', 'eval-cmd', 'grader', 'data-source', 'repo-paths',
+  'team', 'phase', 'port', 'host', 'allow-host', 'issue', 'thread', 'clear-threshold', 'eval-cmd', 'grader', 'setup', 'data-source', 'repo-paths',
   'team-title', 'timeout', 'settle', 'session', 'allow', 'add-allow', 'remove-allow', 'eta',
 ]);
 const BOOL_FLAGS = CLI_BOOL_FLAGS;
@@ -616,7 +616,7 @@ const COMMANDS = [
     text: (xs) => (xs.length ? xs.map((x) => `${pad(x.ref, 32)} ${pad(x.cadence, 8)} owner ${pad(x.owner, 13)} ${x.last_run ? `last run ${when(x.last_run)}, ${age(x.overdue_seconds)} overdue` : 'never run'}`).join('\n') : 'Nothing is due.'),
   },
   {
-    words: ['worktree'], usage: 'worktree <thread-ref>', about: 'Print the git commands that create the thread\'s worktree (never runs git).',
+    words: ['worktree'], usage: 'worktree <thread-ref>', about: 'Print the commands that create the thread\'s worktree: git, then the team\'s setup when team.md has one (never runs them).',
     args: ['thread-ref'],
     run: ({ store, args }) => store.worktreeCommands(args[0]),
     text: (w) => [`branch   ${w.branch}${w.exists ? ' (exists)' : w.remote ? ' (on origin only: the worktree tracks it)' : ''}`, `worktree ${w.path}`, '', ...w.commands, '', `# ${w.note}`].join('\n'),
@@ -725,11 +725,11 @@ const COMMANDS = [
   },
   {
     words: ['team', 'edit'], write: true, who: 'you or the team lead',
-    usage: 'team edit <team> [--eval-cmd <cmd>] [--grader <text>] [--data-source "usage|traces|latency|feedback=<text>"]... [--repo-paths a,b] [--add-allow "<rule>"]... [--remove-allow "<rule>"]... [--allow "<rule>"]... [--clear-allow]',
-    about: 'Change team.md configuration (an empty value clears a field). --add-allow, --remove-allow, --allow (replaces) and --clear-allow set the commands every single-agent thread of the team may run, on top of each thread\'s own. Teams have no thread, so this posts no event; the change is in team.md.',
-    args: ['team'], flags: ['eval-cmd', 'grader', 'data-source', 'repo-paths', 'allow', 'add-allow', 'remove-allow', 'clear-allow'],
+    usage: 'team edit <team> [--eval-cmd <cmd>] [--grader <text>] [--setup <cmd>] [--data-source "usage|traces|latency|feedback=<text>"]... [--repo-paths a,b] [--add-allow "<rule>"]... [--remove-allow "<rule>"]... [--allow "<rule>"]... [--clear-allow]',
+    about: 'Change team.md configuration (an empty value clears a field). --setup is one command line (such as `npm ci`) that `worktree` prints last, so it runs once in each new worktree. --add-allow, --remove-allow, --allow (replaces) and --clear-allow set the commands every single-agent thread of the team may run, on top of each thread\'s own. Teams have no thread, so this posts no event; the change is in team.md.',
+    args: ['team'], flags: ['eval-cmd', 'grader', 'setup', 'data-source', 'repo-paths', 'allow', 'add-allow', 'remove-allow', 'clear-allow'],
     run: ({ store, as, args, flags }) => store.editTeam({
-      as, id: args[0], eval_cmd: flags['eval-cmd'], grader: flags.grader, dataSources: parseDataSources(flags['data-source']), repoPaths: flags['repo-paths'],
+      as, id: args[0], eval_cmd: flags['eval-cmd'], grader: flags.grader, setup: flags.setup, dataSources: parseDataSources(flags['data-source']), repoPaths: flags['repo-paths'],
       allow: flags.allow, allowAdd: flags['add-allow'], allowRemove: flags['remove-allow'], clearAllow: flags['clear-allow'],
     }),
     text: (r, { flags }) => [`Updated team ${r.team.id}: ${r.changed.join(', ')} (${r.team.path}).`, ...riskNotes([...asList(flags.allow), ...asList(flags['add-allow'])])].join('\n'),

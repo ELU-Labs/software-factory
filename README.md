@@ -70,7 +70,7 @@ npm test                                         # the factory's own tests
 ## Configure
 
 - `factory/members.yaml`: who is on the team, their models and effort.
-- `teams/<team>/team.md`: a team's charter, checks and data sources.
+- `teams/<team>/team.md`: a team's charter, checks and data sources. Its `setup` runs once in each new worktree: `node factory/bin/factory.mjs team edit <team> --setup "npm ci" --as you`.
 - `~/.config/software-factory/mcp.json`: MCP servers for the lead's runs (kept outside the repo, since it holds your keys).
 
 The rules every agent follows are in [factory/PROTOCOL.md](factory/PROTOCOL.md). Each role's loop is in `factory/roles/`.
