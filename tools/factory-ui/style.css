@@ -417,6 +417,7 @@ a.run-row:hover { background: var(--hover); color: var(--text); }
 .health:hover { background: var(--hover); color: var(--text); }
 .health.bad { color: var(--danger); }
 .health.warn { color: var(--warning); }
+.cost-today { display: inline-flex; align-items: center; height: 26px; padding: 0 6px; font: 500 11px/1 var(--mono); color: var(--text-faint); white-space: nowrap; }
 
 /* ---------- common atoms ---------- */
 

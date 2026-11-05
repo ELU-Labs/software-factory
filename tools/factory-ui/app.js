@@ -1185,6 +1185,12 @@
     }
   }
 
+  /** A cost total ({usd, runs, unpriced}, store.costs) as dollars, and what it covers. */
+  const usd = (n) => `$${(Number(n) || 0).toFixed(2)}`;
+  const costTip = (c) => `${plural(c.runs, 'agent run')}${c.unpriced ? `; ${c.unpriced} reported no cost (Codex runs report none)` : ''}`;
+  /** A thread's Cost row for its Details panel. */
+  const costRow = (c) => html`<dt>Cost</dt><dd class="mono" title="${c ? costTip(c) : ''}">${c ? `${usd(c.usd)} · ${plural(c.runs, 'run')}` : 'no runs yet'}</dd>`;
+
   function renderRailFoot() {
     const foot = $('#rail-foot');
     if (!foot) return;
@@ -1197,8 +1203,10 @@
       health = html`<a class="health ${cls}" href="#/health" title="factory validate: ${h.errors.length} errors, ${h.warnings.length} warnings">${icon('shield', 'sm')}${label}</a>`;
     }
     const themeIcon = state.theme === 'dark' ? 'moon' : state.theme === 'light' ? 'sun' : 'system';
+    const costs = state.board?.costs;
     paint(foot, html`<span class="live ${live[0]}" title="Live updates from the files on disk"><span class="live-dot"></span>${live[1]}</span>
       ${health}
+      ${costs?.since ? html`<span class="cost-today" title="What agent runs cost today: ${costTip(costs.today)}">${usd(costs.today.usd)} today</span>` : ''}
       <button class="icon-btn" type="button" data-act="theme" title="Theme: ${state.theme}" aria-label="Theme: ${state.theme}">${icon(themeIcon)}</button>
       <button class="icon-btn" type="button" data-act="refresh" title="Refresh now" aria-label="Refresh">${icon('refresh')}</button>`);
   }
@@ -2380,6 +2388,7 @@
       <dt>Lead</dt><dd>${avatar(th.lead, 18, th)}${displayName(th.lead, th)}</dd>
       <dt>Members</dt><dd>${avatarStack(th.members || [], 20, 8, th)}</dd>
       <dt>Updated</dt><dd class="mono" title="${absTime(th.updated)}">${rel(th.updated)}</dd>
+      ${costRow(v.cost)}
     </dl>`);
   }
 
@@ -2401,6 +2410,7 @@
       <dt>Started</dt><dd>${started}</dd>
       <dt>May run</dt><dd>${allowEditor(v)}<span class="faint">plus reading files, read-only commands and the factory CLI${auto ? '' : '. That applies when the autopilot starts it; a session you start uses your own permissions'}</span></dd>
       <dt>Last run</dt><dd class="mono" title="${last ? absTime(last.ended_at) : ''}">${last ? `${rel(last.ended_at)} · ${last.outcome}${last.cost_usd != null ? ` · $${last.cost_usd}` : ''}` : 'not yet'}</dd>
+      ${costRow(v.cost)}
     </dl>`);
   }
 
@@ -2436,6 +2446,7 @@
       <dt>Last run</dt><dd class="mono" title="${th.last_run ? absTime(th.last_run) : ''}">${th.last_run ? rel(th.last_run) : 'never'}</dd>
       <dt>Next run</dt><dd class="mono">${next}</dd>
       <dt>Runs</dt><dd class="mono">${v.metrics.length}</dd>
+      ${costRow(v.cost)}
     </dl>`);
   }
 
@@ -3376,7 +3387,7 @@
   // factory/test/ui.test.mjs runs this file in a VM with `__factoryUiTest` set:
   // it gets the pure helpers below and the page never starts.
   if (globalThis.__factoryUiTest) {
-    Object.assign(globalThis.__factoryUiTest, { shownInChat, mdInline, md, rel, dayLabel, gateWait, waitingMembers, gateEntryTurns, pendingPoints, threadCtx, typeBlock, state, NOTIFY_TYPES, GATE_ENTRY, messageEntries, heldItems, permissionCard, allowEditor, offerCard, newForm, viewNew });
+    Object.assign(globalThis.__factoryUiTest, { shownInChat, mdInline, md, rel, dayLabel, gateWait, waitingMembers, gateEntryTurns, pendingPoints, threadCtx, typeBlock, state, NOTIFY_TYPES, GATE_ENTRY, messageEntries, heldItems, permissionCard, allowEditor, offerCard, newForm, viewNew, sidePanel, usd, costRow });
     return;
   }
 

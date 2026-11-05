@@ -330,6 +330,10 @@ test('autopilot: a question to the agent starts headless Claude with the thread\
   assert.ok(!second.includes('--session-id'));
   assert.equal(second.at(-1), kickoffPrompt('opus-solo', REF, { auto: true, resumed: true, kind: 'solo' }));
   assert.match(second.at(-1), /Re-read its Instructions/);
+  // Each finished run lands in the cost ledger the board totals.
+  const ledger = fs.readFileSync(path.join(root, 'teams', '.autopilot', 'costs.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  assert.deepEqual(ledger.map((x) => [x.member, x.ref, x.outcome, x.cost_usd]), [['opus-solo', REF, 'answered', 0.1235], ['opus-solo', REF, 'answered', 0.1235]]);
+  assert.deepEqual(openStore({ root }).threadView(REF).cost, { usd: 0.247, runs: 2, unpriced: 0 });
 
   const dry = runCli(['autopilot', '--dry-run'], { root, env: fake.env() });
   assert.match(dry.stdout, /opus-solo: nothing to do/);

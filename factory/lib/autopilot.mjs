@@ -11,7 +11,7 @@ import crypto from 'node:crypto';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { leadOnOpenAI, OPENAI_AGENT, roleModel } from './roles.mjs';
-import { openStore, pidAlive, processCommand, isAutopilotPid, isRunPid, writeAtomic, allowRuleProblem, FactoryError, AUTOPILOT_DIR, NOTICE_TYPES, LEAD_PHASES } from './store.mjs';
+import { openStore, pidAlive, processCommand, isAutopilotPid, isRunPid, writeAtomic, allowRuleProblem, FactoryError, AUTOPILOT_DIR, COSTS_FILE, NOTICE_TYPES, LEAD_PHASES } from './store.mjs';
 
 /** Where the ChatGPT desktop app keeps its bundled Codex CLI on macOS. */
 export const CODEX_APP_BIN = '/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex';
@@ -875,6 +875,12 @@ export function startAutopilot({ root, once = false, dryRun = false, settleMs = 
       log(`could not record ${id}'s session for ${r.ref}: ${err.message}`);
     }
     m.last = { ref: r.ref, turns: r.turns, started_at: r.started_at, ended_at: iso(), exit_code: code, signal: signal || null, outcome, left_open: left, log: r.log, said, session, bin: r.bin, cost_usd: cost, denied: denied.length };
+    // The cost ledger the board totals per thread and per day (store.costs); a run that reports no cost is counted too.
+    try {
+      fs.appendFileSync(path.join(autopilotDir(root), COSTS_FILE), `${JSON.stringify({ at: m.last.ended_at, member: id, ref: r.ref, outcome, cost_usd: cost })}\n`);
+    } catch (err) {
+      log(`could not record the cost of ${id}'s run on ${r.ref}: ${err.message}`);
+    }
     // Each thread's latest run, for the board (the newest 50 threads). `restarts` counts the runs in a row
     // started only for builders a run left mid-task (strandedDispatches, MAX_BUILDER_RESTARTS).
     const byThread = { ...(m.by_thread || {}) };

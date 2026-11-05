@@ -94,6 +94,8 @@ export const PRESENCE_DIR = '.presence';
 export const PRESENCE_STATES = Object.freeze(['watching', 'working', 'idle']);
 /** teams/.autopilot/: the autopilot's state.json, its log and one log per agent run (PROTOCOL §16, "Autopilot"). */
 export const AUTOPILOT_DIR = '.autopilot';
+/** teams/.autopilot/costs.jsonl: one line per finished agent run ({at, member, ref, outcome, cost_usd}), appended by the autopilot. */
+export const COSTS_FILE = 'costs.jsonl';
 /** teams/.archive/<team>-<stamp>/: archived teams, moved out whole by `team archive` (PROTOCOL §3). */
 export const ARCHIVE_DIR = '.archive';
 // An archived team's folder: <team id>-<yyyymmddThhmmssZ>[-n] (archiveTeam).
@@ -2083,6 +2085,49 @@ class Store {
     return out.sort((a, b) => byTsThenId(a.message, b.message));
   }
 
+  /**
+   * What agent runs cost, from teams/.autopilot/costs.jsonl: today's total (this machine's
+   * day) and each thread's, as {usd, runs, unpriced}; `unpriced` counts runs that reported
+   * no cost (Codex reports none). `since` is the first run recorded.
+   */
+  costs() {
+    const nowMs = this._nowMs();
+    const d = new Date(nowMs);
+    const dayStart = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    const sum = () => ({ usd: 0, runs: 0, unpriced: 0 });
+    const out = { today: sum(), by_thread: {}, since: null };
+    let text;
+    try {
+      text = fs.readFileSync(path.join(this._abs('teams'), AUTOPILOT_DIR, COSTS_FILE), 'utf8');
+    } catch {
+      return out;
+    }
+    const add = (s, usd) => {
+      s.runs += 1;
+      if (usd == null) s.unpriced += 1;
+      else s.usd += usd;
+    };
+    for (const line of text.split('\n')) {
+      if (!line.trim()) continue;
+      let r;
+      try {
+        r = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      const at = Date.parse(r?.at);
+      if (typeof r?.ref !== 'string' || !Number.isFinite(at)) continue;
+      const usd = typeof r.cost_usd === 'number' && Number.isFinite(r.cost_usd) && r.cost_usd >= 0 ? r.cost_usd : null;
+      add(out.by_thread[r.ref] ||= sum(), usd);
+      if (at >= dayStart) add(out.today, usd);
+      if (!out.since || at < Date.parse(out.since)) out.since = new Date(at).toISOString();
+    }
+    const cents = (s) => Object.assign(s, { usd: Math.round(s.usd * 10000) / 10000 });
+    cents(out.today);
+    Object.values(out.by_thread).forEach(cents);
+    return out;
+  }
+
   /** Everything the board UI shows, across all teams. */
   board() {
     const nowMs = this._nowMs();
@@ -2141,7 +2186,8 @@ class Store {
         issues: issues.map((x) => ({ id: x.id, thread: x.thread, title: x.title, severity: x.severity, status: x.status, gate: x.gate ?? null, task: x.task ?? null, metric: x.metric ?? null, updated: x.updated })),
       });
     }
-    return { generated: new Date(nowMs).toISOString(), members: this.members(), teams, brokenTeams: this.brokenTeams(), archivedTeams: this.archivedTeams(), presence: this.presence(), autopilot: this.autopilot() };
+    const costs = this.costs();
+    return { generated: new Date(nowMs).toISOString(), members: this.members(), teams, brokenTeams: this.brokenTeams(), archivedTeams: this.archivedTeams(), presence: this.presence(), autopilot: this.autopilot(), costs: { today: costs.today, since: costs.since } };
   }
 
   /** One thread with its messages, tasks, issues, decisions, metrics, reports and open turns. */
@@ -2169,6 +2215,8 @@ class Store {
       openTurns: this.openTurns({ thread: `${team}/${id}` }),
       presence: this.presence(),
       autopilot: this.autopilot(),
+      // What this thread's agent runs cost: {usd, runs, unpriced}, or null before its first run.
+      cost: this.costs().by_thread[`${team}/${id}`] || null,
     };
   }
 
