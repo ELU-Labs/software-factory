@@ -186,3 +186,16 @@ test('notes go to the lead as one question with each line and its code; on a gat
   const review = after.messages.filter((m) => m.type === 'review').pop();
   assert.deepEqual(review.points.map((p) => [p.severity, p.text]), [['medium', '`app.js:2`: Keep the retry count at 2.'], ['medium', '`old.txt (removed line 1)`: Why remove this?\nIt is still read.']]);
 });
+
+test('the Changes tab scrolls inside the thread body, like Chat and Brief & plan', () => {
+  // #t-body never scrolls itself: each tab's content (.msgs, .doc, .diff) is its own scroller.
+  // Without this the diff grows past the panel, is clipped, and cannot be scrolled.
+  const css = fs.readFileSync(path.join(UI_DIR, 'style.css'), 'utf8');
+  for (const sel of ['.msgs', '.doc', '.diff']) {
+    const rule = (css.match(new RegExp(`^\\${sel} \\{([^}]*)\\}`, 'm')) || [])[1] || '';
+    assert.match(rule, /(^|;)\s*flex: 1;/, `${sel} fills the thread body`);
+    assert.match(rule, /(^|;)\s*min-height: 0;/, `${sel} may shrink below its content`);
+    assert.match(rule, /(^|;)\s*overflow-y: auto;/, `${sel} scrolls`);
+  }  // The file boxes clip (overflow: hidden), so a grid that fits its height would squash them to nothing.
+  assert.match((css.match(/^\.diff \{([^}]*)\}/m) || [])[1] || '', /(^|;)\s*grid-auto-rows: max-content;/, 'each file keeps its full height');
+});
