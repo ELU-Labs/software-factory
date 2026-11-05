@@ -1026,6 +1026,15 @@ a.turn-more { color: inherit; text-decoration: underline; text-underline-offset:
 .md code { font: 12.5px/1.4 var(--mono); padding: 1px 5px; border-radius: 6px; background: var(--raised); }
 .md pre { margin: 6px 0; padding: 10px 12px; border-radius: var(--r-control); background: var(--raised); overflow-x: auto; }
 .md pre code { padding: 0; background: none; font-size: 12.5px; }
+/* A fenced block: the code scrolls, Copy (and Run, for a command in a message) sit at its end. */
+.md .code-block { display: flex; align-items: flex-start; gap: 4px; margin: 6px 0; border-radius: var(--r-control); background: var(--raised); }
+.md .code-block pre { flex: 1; min-width: 0; margin: 0; background: none; }
+.code-acts { flex: none; display: flex; gap: 4px; padding: 6px 6px 6px 0; }
+.code-btn { display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 8px; border-radius: 7px; border: 1px solid var(--border); background: var(--surface); color: var(--text-muted); font: 500 11.5px/1 var(--font); white-space: nowrap; cursor: pointer; }
+.code-btn:hover { color: var(--text); border-color: var(--border-strong); }
+.code-btn.sure { color: var(--brand-ink); border-color: color-mix(in srgb, var(--brand) 55%, var(--border)); background: color-mix(in srgb, var(--brand) 12%, var(--surface)); }
+.code-run { display: none; }
+.can-run .msg .code-run { display: inline-flex; }
 .md blockquote { margin: 6px 0; padding: 2px 0 2px 12px; border-left: 3px solid var(--border-strong); color: var(--text-muted); }
 .md a { color: var(--brand-ink); text-decoration: underline; text-underline-offset: 2px; }
 .md strong { font-weight: 620; }

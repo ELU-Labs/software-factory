@@ -109,6 +109,7 @@
     clock: '<circle cx="10" cy="10" r="6.75"/><path d="M10 6.5V10l2.5 1.5"/>',
     shield: '<path d="M10 2.8 4.25 5v4.6c0 3.6 2.5 6.1 5.75 7.6 3.25-1.5 5.75-4 5.75-7.6V5z"/>',
     copy: '<rect x="7" y="7" width="9.5" height="9.5" rx="1.8"/><path d="M13 7V5.3A1.8 1.8 0 0 0 11.2 3.5H5.3A1.8 1.8 0 0 0 3.5 5.3v5.9A1.8 1.8 0 0 0 5.3 13H7"/>',
+    play: '<path d="M6.5 4.6v10.8a.6.6 0 0 0 .9.5l8.6-5.4a.6.6 0 0 0 0-1L7.4 4.1a.6.6 0 0 0-.9.5z"/>',
     branch: '<circle cx="6" cy="4.75" r="1.75"/><circle cx="6" cy="15.25" r="1.75"/><circle cx="14" cy="7.25" r="1.75"/><path d="M6 6.5v7M14 9c0 3.2-3.5 3.4-7.6 4.6"/>',
     doc: '<path d="M5.75 2.75h5.75l3.75 3.75v10.25a.5.5 0 0 1-.5.5h-9a.5.5 0 0 1-.5-.5V3.25a.5.5 0 0 1 .5-.5z"/><path d="M11.25 2.75v4h4M7.75 10.25h4.5M7.75 13.25h4.5"/>',
     chat: '<path d="M4 4.25h12a1 1 0 0 1 1 1v7.75a1 1 0 0 1-1 1H9.25L5.5 16.75v-2.75H4a1 1 0 0 1-1-1V5.25a1 1 0 0 1 1-1z"/>',
@@ -559,6 +560,23 @@
   const isBlank = (l) => !String(l).trim();
   const startsBlock = (l) => /^\s*(```|~~~)/.test(l) || /^#{1,6}\s/.test(l) || /^\s*>/.test(l) || LIST_RE.test(l) || /^\s*([-*_])(\s*\1){2,}\s*$/.test(l);
 
+  // Fenced code a terminal can run: a shell block, or one with no language that is not data (JSON, markup).
+  // server.mjs (codeBlocks, runnable, commandText) reads message bodies the same way.
+  const SHELL_LANGS = new Set(['sh', 'bash', 'zsh', 'shell', 'console', 'terminal']);
+  const runnable = (code, lang) => Boolean(code.trim()) && (SHELL_LANGS.has(lang) || (!lang && !/^\s*[{[<]/.test(code)));
+  /** The command in a block: a console block's `$ ` lines without the prompt (its output lines dropped). */
+  const commandText = (code, lang) => {
+    if (lang !== 'console') return code;
+    const cmds = code.split('\n').filter((l) => /^\s*\$ /.test(l));
+    return cmds.length ? cmds.map((l) => l.replace(/^\s*\$ /, '')).join('\n') : code;
+  };
+  /** A fenced block with Copy, and Run for a command (Run shows in messages, on a board that can open a terminal). */
+  const codeBlock = (code, lang) =>
+    `<div class="code-block"${lang ? ` data-lang="${esc(lang)}"` : ''}><pre><code>${esc(code)}</code></pre><span class="code-acts">`
+    + `<button type="button" class="code-btn" data-act="copy-code" title="Copy">${icon('copy', 'xs')}<span>Copy</span></button>`
+    + (runnable(code, lang) ? `<button type="button" class="code-btn code-run" data-act="run-code" title="Run it in a new Terminal window, in this repo's folder">${icon('play', 'xs')}<span>Run</span></button>` : '')
+    + '</span></div>';
+
   function md(src) {
     const lines = String(src ?? '').replace(/\r\n?/g, '\n').split('\n');
     const out = [];
@@ -569,14 +587,14 @@
         i += 1;
         continue;
       }
-      let m = /^\s*(```|~~~)/.exec(l);
+      let m = /^\s*(```|~~~)\s*([\w+#.-]*)/.exec(l);
       if (m) {
         const fence = m[1];
         const buf = [];
         i += 1;
         while (i < lines.length && !lines[i].trim().startsWith(fence)) buf.push(lines[i++]);
         i += 1;
-        out.push(`<pre><code>${esc(buf.join('\n'))}</code></pre>`);
+        out.push(codeBlock(buf.join('\n'), m[2].toLowerCase()));
         continue;
       }
       m = /^(#{1,6})\s+(.*?)\s*#*\s*$/.exec(l);
@@ -692,6 +710,8 @@
           }
           state.board = b;
           state.boardError = null;
+          // Run on a message's command needs a board that can open a terminal on this machine.
+          document.body?.classList.toggle('can-run', Boolean(b.terminal));
         }).catch((e) => {
           state.boardError = e;
         }),
@@ -3565,6 +3585,42 @@ ${sc.body}">${icon('clock', 'xs')}<span class="sched-what">${what}</span>
         );
         break;
       }
+      case 'copy-code': {
+        const block = el.closest('.code-block');
+        const text = commandText(block?.querySelector('code')?.textContent || '', block?.dataset.lang || '');
+        const label = el.lastChild;
+        copyText(text).then(
+          () => {
+            label.textContent = 'Copied';
+            setTimeout(() => (label.textContent = 'Copy'), 1500);
+          },
+          () => toast('Could not copy; select the text instead', true),
+        );
+        break;
+      }
+      case 'run-code': {
+        // Two clicks: the first asks, the second opens a Terminal window in the repo folder and runs it there.
+        const block = el.closest('.code-block');
+        const id = el.closest('.msg')?.dataset.id;
+        if (!block || !id) break;
+        const label = el.lastChild;
+        if (!el.classList.contains('sure')) {
+          el.classList.add('sure');
+          label.textContent = 'Run it?';
+          setTimeout(() => {
+            el.classList.remove('sure');
+            label.textContent = 'Run';
+          }, 4000);
+          break;
+        }
+        el.classList.remove('sure');
+        label.textContent = 'Run';
+        api('/api/run', { id, code: block.querySelector('code').textContent }).then(
+          () => toast('Running it in a new Terminal window'),
+          (err) => toast(err.message, true),
+        );
+        break;
+      }
       case 'copy-resume':
         copyText(el.dataset.cmd).then(() => toast('Copied: paste it in a terminal'), () => toast('Could not copy; hover the button to see the command', true));
         break;
@@ -4104,7 +4160,7 @@ ${sc.body}">${icon('clock', 'xs')}<span class="sched-what">${what}</span>
   // factory/test/ui.test.mjs runs this file in a VM with `__factoryUiTest` set:
   // it gets the pure helpers below and the page never starts.
   if (globalThis.__factoryUiTest) {
-    Object.assign(globalThis.__factoryUiTest, { shownInChat, mdInline, md, rel, dayLabel, gateWait, waitingMembers, gateEntryTurns, pendingPoints, threadCtx, typeBlock, state, NOTIFY_TYPES, GATE_ENTRY, messageEntries, heldItems, permissionCard, allowEditor, offerCard, newForm, viewNew, sidePanel, usd, costRow, waitingOnYou, newlyWaiting, notifyWaiting, isUnread, markSeen, railTeams, jumpItems, parseDiff, diffView, notesMessage, notesRequest, threadHead, railRunning, scheduleChip, scheduleRow, composerFoot, everyText, everyShort, nextText, messageItem, draft, threadCard });
+    Object.assign(globalThis.__factoryUiTest, { shownInChat, mdInline, md, rel, dayLabel, gateWait, waitingMembers, gateEntryTurns, pendingPoints, threadCtx, typeBlock, state, NOTIFY_TYPES, GATE_ENTRY, messageEntries, heldItems, permissionCard, allowEditor, offerCard, newForm, viewNew, sidePanel, usd, costRow, waitingOnYou, newlyWaiting, notifyWaiting, isUnread, markSeen, railTeams, jumpItems, parseDiff, diffView, notesMessage, notesRequest, threadHead, railRunning, scheduleChip, scheduleRow, composerFoot, everyText, everyShort, nextText, messageItem, draft, threadCard, commandText, runnable });
     return;
   }
 

@@ -16,7 +16,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import crypto from 'node:crypto';
 import { CLAUDE_MODELS, OPENAI_MODELS } from '../../factory/lib/roles.mjs';
 import { openStore, FactoryError, REVIEW_GATES, PRESENCE_DIR, AUTOPILOT_DIR, pidAlive, factoryProcesses, allowRuleProblem, allowRuleRisk, ATTACHMENT_PATH_RE, ATTACHMENT_TYPES, MAX_ATTACHMENT_BYTES } from '../../factory/lib/store.mjs';
 import { fetchIssue, issueRequest } from '../../factory/lib/github-issue.mjs';
@@ -82,6 +83,45 @@ function sendJson(res, status, value) {
 
 function sendError(res, status, code, message) {
   sendJson(res, status, { error: message, code });
+}
+
+// A message's fenced code, read as the board shows it (app.js md(), runnable, commandText): [{code, lang}].
+const SHELL_LANGS = new Set(['sh', 'bash', 'zsh', 'shell', 'console', 'terminal']);
+const runnable = (code, lang) => Boolean(code.trim()) && (SHELL_LANGS.has(lang) || (!lang && !/^\s*[{[<]/.test(code)));
+const commandText = (code, lang) => {
+  if (lang !== 'console') return code;
+  const cmds = code.split('\n').filter((l) => /^\s*\$ /.test(l));
+  return cmds.length ? cmds.map((l) => l.replace(/^\s*\$ /, '')).join('\n') : code;
+};
+function codeBlocks(body) {
+  const lines = String(body ?? '').replace(/\r\n?/g, '\n').split('\n');
+  const out = [];
+  for (let i = 0; i < lines.length; i++) {
+    const m = /^\s*(```|~~~)\s*([\w+#.-]*)/.exec(lines[i]);
+    if (!m) continue;
+    const buf = [];
+    i += 1;
+    while (i < lines.length && !lines[i].trim().startsWith(m[1])) buf.push(lines[i++]);
+    out.push({ code: buf.join('\n'), lang: m[2].toLowerCase() });
+  }
+  return out;
+}
+
+/** A word the shell reads as itself. */
+const shq = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
+
+/**
+ * How the board opens a new terminal window that runs a shell line: FACTORY_TERMINAL_BIN
+ * (a program given the line as its one argument), else Terminal on macOS. null when there
+ * is neither: Run is then not offered, and Copy still is.
+ */
+export function terminalLauncher(env = process.env, platform = process.platform) {
+  const bin = String(env.FACTORY_TERMINAL_BIN || '').trim();
+  if (bin) return (line) => [bin, [line]];
+  if (platform === 'darwin') {
+    return (line) => ['osascript', ['-e', 'on run argv', '-e', 'tell application "Terminal"', '-e', 'activate', '-e', 'do script (item 1 of argv)', '-e', 'end tell', '-e', 'end run', line]];
+  }
+  return null;
 }
 
 function sendFactoryError(res, err) {
@@ -348,7 +388,7 @@ function portOf(v, fallback) {
  *   port 0 picks a free port; allowHosts adds Host names the board answers to
  * @returns {Promise<{server: http.Server, url: string, bind: string, warning: string|null, close: () => Promise<void>}>}
  */
-export function startServer({ root, port = 4477, host = '127.0.0.1', allowHosts = [], warn = (text) => process.stderr.write(`${text}\n`) } = {}) {
+export function startServer({ root, port = 4477, host = '127.0.0.1', allowHosts = [], terminal = terminalLauncher(), warn = (text) => process.stderr.write(`${text}\n`) } = {}) {
   const factoryRoot = openStore({ root }).root;
   const bindHost = host == null ? '127.0.0.1' : String(host);
   const wantPort = portOf(port, 4477);
@@ -442,7 +482,8 @@ export function startServer({ root, port = 4477, host = '127.0.0.1', allowHosts 
   };
 
   const GET_ROUTES = {
-    '/api/board': () => store().board(),
+    // terminal: whether Run on a message's command can open a terminal here (only on a board bound to this machine).
+    '/api/board': () => ({ ...store().board(), terminal: Boolean(terminal && access.loopback) }),
     // What the New thread form offers: the models a Claude role runs on, OpenAI's models, and the agents of each role.
     '/api/thread/options': () => {
       const roster = store().members();
@@ -585,6 +626,50 @@ export function startServer({ root, port = 4477, host = '127.0.0.1', allowHosts 
       if (action === 'pause' || action === 'resume') return s.setScheduleState({ as: 'you', ref, paused: action === 'pause' });
       if (action === 'clear') return s.clearSchedule({ as: 'you', ref });
       throw new FactoryError('usage', `unknown schedule action "${action}"; use set, pause, resume or clear`);
+    },
+    // Run a command a message shows, in a new terminal window in the repo folder (the owner clicked Run, then confirmed).
+    // Only a fenced shell block of that message runs, on a board bound to this machine.
+    '/api/run': async (b) => {
+      if (!access.loopback) throw new FactoryError('permission', `Run works only on a board bound to this machine; this one listens on ${access.bind}. Copy the command instead`);
+      if (!terminal) throw new FactoryError('usage', 'this board cannot open a terminal here: set FACTORY_TERMINAL_BIN to a program that opens one with a shell line, or copy the command');
+      const m = store().message(str(b.id));
+      const code = typeof b.code === 'string' ? b.code.replace(/\r\n?/g, '\n') : '';
+      const block = codeBlocks(m.body).find((x) => x.code === code);
+      if (!block) throw new FactoryError('not_found', `that command is not in message ${m.id}; copy it instead`);
+      if (!runnable(block.code, block.lang)) throw new FactoryError('usage', 'only a shell command runs from the board; copy this one instead');
+      const cmd = commandText(block.code, block.lang);
+      // A script the terminal's own shell sources (comments and multi-line commands work as typed), showing the command first.
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'factory-run-'));
+      const file = path.join(dir, 'run.sh');
+      const tag = `FACTORY_RUN_${crypto.randomBytes(4).toString('hex')}`;
+      fs.writeFileSync(file, `cat <<'${tag}'\n${cmd}\n${tag}\n${cmd}\nrm -rf -- ${shq(dir)}\n`, { mode: 0o600 });
+      const [bin, args] = terminal(`cd ${shq(factoryRoot)} && source ${shq(file)}`);
+      await new Promise((resolve, reject) => {
+        let child;
+        try {
+          child = spawn(bin, args, { detached: true, stdio: ['ignore', 'ignore', 'pipe'] });
+        } catch (err) {
+          reject(new FactoryError('conflict', `could not open a terminal: ${err.message}`));
+          return;
+        }
+        let err = '';
+        child.stderr.on('data', (d) => (err += d));
+        // A launcher still going after 10 s has opened its window (or waits on macOS asking to allow it).
+        const timer = setTimeout(() => {
+          child.unref();
+          resolve();
+        }, 10000);
+        child.on('error', (e) => {
+          clearTimeout(timer);
+          reject(new FactoryError('conflict', `could not open a terminal: ${e.message}`));
+        });
+        child.on('exit', (code) => {
+          clearTimeout(timer);
+          if (code === 0) resolve();
+          else reject(new FactoryError('conflict', `could not open a terminal (${bin} exited ${code}): ${err.trim().split('\n').pop() || 'no message'}`));
+        });
+      });
+      return { ran: true, message: m.id };
     },
     // Close a turn waiting on you without answering it: a hidden note that resolves just that turn.
     '/api/dismiss': (b) => store().dismiss({ as: 'you', ref: str(b.ref), ids: list(b.ids ?? b.id), member: str(b.member) || undefined }),
@@ -786,7 +871,7 @@ export function startServer({ root, port = 4477, host = '127.0.0.1', allowHosts 
           return sendError(res, 403, 'permission', refused);
         }
         const body = await readJsonBody(req, BODY_LIMITS[pathname]);
-        return sendJson(res, 200, POST_ROUTES[pathname](body));
+        return sendJson(res, 200, await POST_ROUTES[pathname](body));
       }
       return sendError(res, 404, 'not_found', `no route ${method} ${pathname}`);
     } catch (err) {
