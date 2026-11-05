@@ -1572,7 +1572,7 @@
     const builder = members().find((m) => m.role === 'builder')?.id;
     if (!state.newThread) {
       state.newThread = {
-        open: false, team: '', newTeam: '', title: '', prompt: '', busy: false, error: '',
+        open: false, team: '', newTeam: '', title: '', prompt: '', busy: false, error: '', issue: '', issueBusy: false,
         lead: nfRole(lead, { model: rosterModel(lead, 'claude-fable-5-1') }),
         subagents: nfRole(null, { model: rosterModel(builder, 'claude-opus-5-5') }),
         pair: nfRole('gpt-6.1-sol'),
@@ -1690,6 +1690,11 @@
             <select class="select" id="nf-team" data-new="team">${teams.map((t) => html`<option value="${t.id}"${f.team === t.id ? raw(' selected') : ''}>${t.title}</option>`)}<option value=""${f.team ? '' : raw(' selected')}>New team…</option></select>
             ${f.team ? '' : html`<input class="field" id="nf-newteam" data-new="newTeam" placeholder="New team name, e.g. Checkout" value="${f.newTeam}">`}
           </div>
+          <label class="nf-label" for="nf-issue">From a GitHub issue (optional)</label>
+          <div class="nf-row">
+            <input class="field" id="nf-issue" data-new="issue" placeholder="Issue number or link" value="${f.issue}" autocomplete="off" spellcheck="false">
+            <button class="btn btn-outline" type="button" data-act="nf-issue"${f.issueBusy ? raw(' disabled') : ''}>${f.issueBusy ? 'Loading…' : 'Use issue'}</button>
+          </div>
           <label class="nf-label" for="nf-title">Title</label>
           <input class="field" id="nf-title" data-new="title" placeholder="Short name, e.g. Cut chat latency" value="${f.title}">
           <label class="nf-label" for="nf-prompt">What to do (everyone you pick works from this)</label>
@@ -1707,6 +1712,32 @@
         </footer>
       </div>
     </div>`;
+  }
+
+  /** Fill the form from a GitHub issue (GET /api/issue): its title when none is typed, and its link and text as the request. */
+  async function loadIssue() {
+    const f = state.newThread;
+    if (!f || f.issueBusy) return;
+    const ref = String(f.issue || '').trim();
+    if (!ref) {
+      f.error = 'Type the issue number or link first.';
+      return renderModal(true);
+    }
+    f.issueBusy = true;
+    f.error = '';
+    renderModal(true);
+    try {
+      const r = await api(`/api/issue?ref=${encodeURIComponent(ref)}`);
+      if (!String(f.title).trim()) f.title = r.title;
+      const prompt = String(f.prompt).trim();
+      if (!prompt.includes(r.url)) f.prompt = prompt ? `${prompt}\n\n${r.request}` : r.request;
+      toast(`Loaded issue #${r.number}`);
+    } catch (e) {
+      f.error = e.message;
+    } finally {
+      f.issueBusy = false;
+      renderModal(true);
+    }
   }
 
   /** The roles to send: the lead's model, the subagents' Claude model, and who plays each other role (an OpenAI model id reads as openai on it). */
@@ -3081,6 +3112,9 @@
         archiveTeam(id);
         break;
       }
+      case 'nf-issue':
+        loadIssue();
+        break;
       case 'nf-close':
         closeNewThread();
         break;
@@ -3262,6 +3296,11 @@
   });
 
   document.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && e.target?.id === 'nf-issue') {
+      e.preventDefault();
+      loadIssue();
+      return;
+    }
     if (e.key === 'Enter' && e.target?.id === 'allow-input') {
       e.preventDefault();
       allowAction('add');
@@ -3337,7 +3376,7 @@
   // factory/test/ui.test.mjs runs this file in a VM with `__factoryUiTest` set:
   // it gets the pure helpers below and the page never starts.
   if (globalThis.__factoryUiTest) {
-    Object.assign(globalThis.__factoryUiTest, { shownInChat, mdInline, md, rel, dayLabel, gateWait, waitingMembers, gateEntryTurns, pendingPoints, threadCtx, typeBlock, state, NOTIFY_TYPES, GATE_ENTRY, messageEntries, heldItems, permissionCard, allowEditor, offerCard });
+    Object.assign(globalThis.__factoryUiTest, { shownInChat, mdInline, md, rel, dayLabel, gateWait, waitingMembers, gateEntryTurns, pendingPoints, threadCtx, typeBlock, state, NOTIFY_TYPES, GATE_ENTRY, messageEntries, heldItems, permissionCard, allowEditor, offerCard, newForm, viewNew });
     return;
   }
 

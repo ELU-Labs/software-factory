@@ -26,7 +26,7 @@ The owner should only have to describe the task. Do all of this without asking q
    The autopilot starts `openai` by itself, in a headless Codex run, whenever it holds a turn, and `fable` and a single-agent thread's agent (`opus-solo`) in headless Claude Code runs.
 2. Pick the team. Run `node factory/bin/factory.mjs team list` and reuse the team whose title or `repo_paths` cover the feature area. Otherwise pick a short new id for the area (`checkout`, `search`, `onboarding`); `thread new` creates the team and its folder.
 3. Pick a thread id: 2–4 lowercase words with dashes from the task (`retry-failed-payments`). It becomes the branch name.
-4. `node factory/bin/factory.mjs thread new <team>/<thread> --title "<Title>" --team-title "<Area title>" --as fable`
+4. `node factory/bin/factory.mjs thread new <team>/<thread> --title "<Title>" --team-title "<Area title>" --as fable`. When the owner points at a GitHub issue, add `--from-issue <n|url>`: the issue's link and text are recorded as the thread's request.
 5. If the repo has a skill or guide for this area, read it first: its rules bind the brief, the plan and every dispatch. Paid evals are run by the owner only (roles/lead.md, "Evals and metrics").
 6. Read the code the task touches, then write the brief (Problem, Users, Success criteria, Out of scope) to a scratch file and:
    `node factory/bin/factory.mjs thread edit <team>/<thread> --section Brief --body-file <file> --as fable`

@@ -44,7 +44,7 @@ node factory/bin/factory.mjs init
 node factory/bin/factory.mjs ui --open
 ```
 
-The board opens at http://127.0.0.1:4477 and starts the autopilot. Start a thread there, or ask Claude Code in your repo:
+The board opens at http://127.0.0.1:4477 and starts the autopilot. Start a thread there (or from a GitHub issue: give its number in the New thread form), or ask Claude Code in your repo:
 
 ```
 /factory start a thread to add retries to failed payments

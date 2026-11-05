@@ -15,6 +15,7 @@ import {
   openStore, FactoryError, summary, sectionText, pidAlive, PROJECT_PHASES, REVIEW_GATES, DATA_SOURCE_KEYS, CLI_BOOL_FLAGS, allowRuleRisk, fmtDuration,
 } from '../lib/store.mjs';
 import { rolesLines } from '../lib/roles.mjs';
+import { fetchIssue, issueRequest } from '../lib/github-issue.mjs';
 import { startAutopilot, runningAutopilot, stopLeftoverRuns, autopilotDir, readSessions, setSession, SESSION_RE, SETTLE_MS, MAX_RUNS_PER_HOUR } from '../lib/autopilot.mjs';
 import { loginItemLabel, loginItemPath, loginItemLog, loginItemPlist, loginEnv } from '../lib/login-item.mjs';
 
@@ -38,7 +39,7 @@ const VALUE_FLAGS = new Set([
   'to', 'cc', 'reply-to', 'resolves', 'refs', 'verdict', 'point', 'points-file', 'review', 'stance', 'stances-file', 'outcome',
   'reason', 'severity', 'source', 'metric', 'action', 'note', 'gate', 'metrics', 'metrics-file', 'from', 'limit', 'status',
   'team', 'phase', 'port', 'host', 'allow-host', 'issue', 'thread', 'clear-threshold', 'eval-cmd', 'grader', 'setup', 'data-source', 'repo-paths',
-  'team-title', 'timeout', 'settle', 'session', 'allow', 'add-allow', 'remove-allow', 'eta',
+  'team-title', 'timeout', 'settle', 'session', 'allow', 'add-allow', 'remove-allow', 'eta', 'from-issue',
 ]);
 const BOOL_FLAGS = CLI_BOOL_FLAGS;
 /** Flags that repeat, each occurrence one more item. */
@@ -660,14 +661,25 @@ const COMMANDS = [
   },
   {
     words: ['thread', 'new'], write: true, who: 'the team lead or you',
-    usage: 'thread new <team>/<thread> --title <t> [--team-title <t>] [--kind project|watch|solo] [--lead m] [--owner m] [--members a,b] [--cadence c] [--threshold "metric<=v" | "metric>=v"]... [--allow "<rule>"]...',
-    about: 'Start a project thread (phase brief), a watch thread (phase active) or a single-agent thread (--kind solo: one agent, --owner, that leads the thread itself and works when you ask it; no --lead; each --allow adds a command its runs may use, as a Claude Code permission rule). A team that does not exist yet is created first (folder teams/<team>, title from --team-title or the id) when you or a lead runs it.',
-    args: ['team/thread'], flags: ['title', 'team-title', 'kind', 'lead', 'owner', 'members', 'cadence', 'threshold', 'allow'],
-    run: ({ store, as, args, flags }) => store.createThread({
-      as, ref: args[0], title: flags.title, kind: flags.kind || 'project', lead: flags.lead, owner: flags.owner,
-      members: flags.members, cadence: flags.cadence, thresholds: parseThresholds(flags.threshold), teamTitle: flags['team-title'], allow: flags.allow,
-    }),
-    text: (r) => `${r.team_created ? `Created team ${r.thread.team} (new folder teams/${r.thread.team}).\n` : ''}Created ${r.thread.team}/${r.thread.id} (${r.thread.kind}, phase ${r.thread.phase}, lead ${r.thread.lead}${r.thread.owner ? `, owner ${r.thread.owner}` : ''}): ${r.thread.path}`,
+    usage: 'thread new <team>/<thread> [--title <t>] [--from-issue <n|url>] [--team-title <t>] [--kind project|watch|solo] [--lead m] [--owner m] [--members a,b] [--cadence c] [--threshold "metric<=v" | "metric>=v"]... [--allow "<rule>"]...',
+    about: 'Start a project thread (phase brief), a watch thread (phase active) or a single-agent thread (--kind solo: one agent, --owner, that leads the thread itself and works when you ask it; no --lead; each --allow adds a command its runs may use, as a Claude Code permission rule). A team that does not exist yet is created first (folder teams/<team>, title from --team-title or the id) when you or a lead runs it. --from-issue reads a GitHub issue with `gh`: its title is the default --title, and its link and text are posted as the request (the kickoff to the lead, or the question to a single-agent thread\'s agent).',
+    args: ['team/thread'], flags: ['title', 'from-issue', 'team-title', 'kind', 'lead', 'owner', 'members', 'cadence', 'threshold', 'allow'],
+    run: ({ store, as, args, flags }) => {
+      if (flags['from-issue'] != null && flags.kind === 'watch') throw usage('--from-issue starts a project or single-agent thread; a watch has no request');
+      const issue = flags['from-issue'] != null ? fetchIssue(store.root, flags['from-issue']) : null;
+      const made = store.createThread({
+        as, ref: args[0], title: flags.title ?? issue?.title, kind: flags.kind || 'project', lead: flags.lead, owner: flags.owner,
+        members: flags.members, cadence: flags.cadence, thresholds: parseThresholds(flags.threshold), teamTitle: flags['team-title'], allow: flags.allow,
+      });
+      if (!issue) return made;
+      // The issue is the thread's request: a kickoff to the lead (recorded only, when the lead started it), or a single-agent thread's question.
+      const th = made.thread;
+      const solo = th.kind === 'solo';
+      const to = solo ? [th.owner] : th.lead === as ? [] : [th.lead];
+      const message = store.post({ as, ref: `${th.team}/${th.id}`, type: solo ? 'question' : 'kickoff', to, body: issueRequest(issue) }).message;
+      return { ...made, issue: { number: issue.number, url: issue.url }, message };
+    },
+    text: (r) => `${r.team_created ? `Created team ${r.thread.team} (new folder teams/${r.thread.team}).\n` : ''}Created ${r.thread.team}/${r.thread.id} (${r.thread.kind}, phase ${r.thread.phase}, lead ${r.thread.lead}${r.thread.owner ? `, owner ${r.thread.owner}` : ''}): ${r.thread.path}${r.issue ? `\nPosted issue #${r.issue.number} as its request${r.message.to?.length ? ` to ${r.message.to.join(', ')}` : ''}.` : ''}`,
   },
   {
     words: ['thread', 'edit'], usage: 'thread edit <thread-ref> --section <name> (--body|--body-file|stdin)', write: true, who: 'the thread lead or you',

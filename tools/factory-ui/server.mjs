@@ -19,6 +19,7 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { CLAUDE_MODELS, OPENAI_MODELS } from '../../factory/lib/roles.mjs';
 import { openStore, FactoryError, REVIEW_GATES, PRESENCE_DIR, AUTOPILOT_DIR, pidAlive, factoryProcesses, allowRuleProblem, allowRuleRisk, ATTACHMENT_PATH_RE, ATTACHMENT_TYPES, MAX_ATTACHMENT_BYTES } from '../../factory/lib/store.mjs';
+import { fetchIssue, issueRequest } from '../../factory/lib/github-issue.mjs';
 
 const UI_DIR = path.dirname(fileURLToPath(import.meta.url));
 
@@ -466,6 +467,11 @@ export function startServer({ root, port = 4477, host = '127.0.0.1', allowHosts 
       return { member, generated: new Date().toISOString(), turns: s.openTurns({ member }) };
     },
     '/api/validate': () => store().validate(),
+    // A GitHub issue for the New thread form: its title, and the request a thread started from it carries.
+    '/api/issue': (q) => {
+      const issue = fetchIssue(factoryRoot, str(q.get('ref')) || '');
+      return { number: issue.number, title: issue.title, url: issue.url, request: issueRequest(issue) };
+    },
     // What runs on this machine: this root's autopilot, and leftover autopilots or boards (other roots, extra copies).
     '/api/processes': () => processList(),
     // Lets `factory ui` find a board that is already running for this root.

@@ -125,7 +125,7 @@ Thread configuration changes go through `factory thread set <thread-ref>` (lead 
 
 ### Roles
 
-A thread started from the board's New thread carries an optional `roles` key: who the owner picked for each role, and on which model. The board starts project threads only: with every role but the lead unticked, the lead does the work alone and `you` own the review gates. Single-agent threads (§5) are made with `factory thread new --kind solo`. Everyone works from the thread's one request (the `kickoff`, or a single-agent thread's question); a role has no prompt of its own. Threads without `roles` work as before (the roster's models, the default gate owners). `thread show <thread-ref>` prints it, one line per role.
+A thread started from the board's New thread carries an optional `roles` key: who the owner picked for each role, and on which model. The board starts project threads only: with every role but the lead unticked, the lead does the work alone and `you` own the review gates. Single-agent threads (§5) are made with `factory thread new --kind solo`. Everyone works from the thread's one request (the `kickoff`, or a single-agent thread's question); a role has no prompt of its own. A thread can start from a GitHub issue (`thread new --from-issue <n|url>`, or the form's issue field): `gh` reads it, its title becomes the thread's, and its link and text are the request. Threads without `roles` work as before (the roster's models, the default gate owners). `thread show <thread-ref>` prints it, one line per role.
 
 | Role | Played by | What it changes |
 |---|---|---|
@@ -724,7 +724,7 @@ Read:
 Write (--as required except init):
   init
   team new <team> --title <t> [--lead m]
-  thread new <team>/<thread> --title <t> [--team-title <t>] [--kind project|watch|solo] [--lead m] [--owner m] [--members a,b] [--cadence c] [--threshold "metric<=v" | "metric>=v"]... [--allow "<rule>"]...
+  thread new <team>/<thread> [--title <t>] [--from-issue <n|url>] [--team-title <t>] [--kind project|watch|solo] [--lead m] [--owner m] [--members a,b] [--cadence c] [--threshold "metric<=v" | "metric>=v"]... [--allow "<rule>"]...
   thread edit <thread-ref> --section <name> (--body|--body-file|stdin)
   thread set <thread-ref> [--cadence c] [--threshold "metric<=v" | "metric>=v"]... [--clear-threshold m] [--owner m] [--members a,b] [--add-allow "<rule>"]... [--remove-allow "<rule>"]... [--allow "<rule>"]... [--clear-allow]
   thread eta <thread-ref> --eta <phase>=<time>[,<phase>=<time>...]
