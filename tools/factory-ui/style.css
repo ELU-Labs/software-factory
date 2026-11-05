@@ -389,6 +389,8 @@ a.run-row:hover { background: var(--hover); color: var(--text); }
 .titem-title { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .titem .pill, .titem .count { flex: none; }
 .titem.dim { opacity: .5; }
+.titem.unread .titem-title { color: var(--text); font-weight: 600; }
+.unread-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--brand); flex: none; }
 .team.archived { margin-top: 6px; }
 .team.archived .team-title { color: var(--text-faint); }
 .arch-item { height: auto; min-height: 40px; padding-top: 4px; padding-bottom: 4px; }
@@ -530,6 +532,7 @@ a.chip.team:hover { color: var(--text); border-color: var(--border-strong); }
   background: transparent; color: var(--text-faint);
 }
 .icon-btn:hover { background: var(--hover); color: var(--text); }
+.icon-btn.on { color: var(--brand-ink); }
 
 .ref {
   display: inline-flex; align-items: center; gap: 4px;

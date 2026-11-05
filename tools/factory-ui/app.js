@@ -86,6 +86,7 @@
     solo: '<circle cx="10" cy="6.75" r="3.25"/><path d="M4.25 16.75c.85-3.1 3-4.75 5.75-4.75s4.9 1.65 5.75 4.75"/>',
     board: '<rect x="2.75" y="3.25" width="4.25" height="13.5" rx="1.4"/><rect x="7.9" y="3.25" width="4.25" height="9.5" rx="1.4"/><rect x="13.05" y="3.25" width="4.25" height="6" rx="1.4"/>',
     tasks: '<path d="M8.5 5.5h8.5M8.5 10h8.5M8.5 14.5h8.5"/><path d="M3 5.6l1.3 1.3L6.4 4.6M3 10.1l1.3 1.3 2.1-2.3M3 14.6l1.3 1.3 2.1-2.3"/>',
+    bell: '<path d="M5.25 8.5a4.75 4.75 0 0 1 9.5 0c0 3.6 1.5 5.25 1.5 5.25H3.75s1.5-1.65 1.5-5.25z"/><path d="M8.4 16.25a1.75 1.75 0 0 0 3.2 0"/>',
     inbox: '<path d="M3 11.5V15a1.5 1.5 0 0 0 1.5 1.5h11A1.5 1.5 0 0 0 17 15v-3.5"/><path d="M3 11.5 5.2 4.6a1.5 1.5 0 0 1 1.4-1.1h6.8a1.5 1.5 0 0 1 1.4 1.1L17 11.5h-4l-1 2H8l-1-2z"/>',
     project: '<path d="M4 7.5h12.5M3.5 12.5H16M8.5 3.5 7 16.5M13.5 3.5 12 16.5"/>',
     watch: '<path d="M2.5 10.5h3l2-5.5 3.5 10 2.2-4.5h4.3"/>',
@@ -169,6 +170,15 @@
     /** Long message bodies the reader unfolded (ids); the rest show their first lines. */
     unfolded: new Set(),
     theme: LS.get('theme', 'system'),
+    /** Desktop notifications when something new waits on you: opt-in, and the browser asks once. */
+    notify: LS.get('notify', false) === true,
+    /** When each thread was last read here ({ref: ts}), and when this browser began tracking: newer activity is unread. */
+    seen: LS.get('seen', {}) || {},
+    seenSince: LS.get('seenSince', null),
+    /** What waited on you at the last refresh (keys), so a notification goes out only for what is new; null before the first. */
+    waitingKeys: null,
+    waitingCount: 0,
+    baseTitle: 'Software Factory',
     /** The answer to the Triage thread's observability offer ('yes' or 'no'); null until the owner picks. */
     offer: LS.get('observability', null),
     sideOpen: false,
@@ -657,6 +667,14 @@
       if (r.name === 'health' || !state.health) jobs.push(loadHealth());
       await Promise.all(jobs);
       state.loaded = true;
+      if (state.board) {
+        if (!state.seenSince) {
+          state.seenSince = state.board.generated;
+          LS.set('seenSince', state.seenSince);
+        }
+        if (r.name === 'thread' && state.thread && state.threadRef === r.ref && document.visibilityState === 'visible') markSeen(state.thread);
+        notifyWaiting();
+      }
       render();
       if (state.pendingNew !== null) {
         const team = state.pendingNew;
@@ -1142,9 +1160,10 @@
           const n = mineN || th.openTurns.length + (gw ? 1 : 0);
           const mine = mineN > 0;
           const dim = state.filter && !involves(th, state.filter);
-          return html`<li><a class="titem${current === `${t.id}/${th.id}` ? ' on' : ''}${dim ? ' dim' : ''}" href="${threadHash(t.id, th.id)}" title="${th.title}">
+          const unread = current !== `${t.id}/${th.id}` && isUnread(th);
+          return html`<li><a class="titem${current === `${t.id}/${th.id}` ? ' on' : ''}${dim ? ' dim' : ''}${unread ? ' unread' : ''}" href="${threadHash(t.id, th.id)}" title="${th.title}${unread ? ' (new since you last looked)' : ''}">
             <span class="titem-ic">${icon(th.kind === 'watch' ? 'watch' : th.kind === 'solo' ? 'solo' : 'project', 'sm')}</span>
-            <span class="titem-title">${th.title}</span>
+            <span class="titem-title">${th.title}</span>${unread ? raw('<span class="unread-dot" aria-label="unread"></span>') : ''}
             ${phasePill(th, true)}
             ${n ? html`<span title="${mine ? `${plural(mineN, 'item')} waiting on ${focus === 'you' ? 'you' : displayName(focus)}` : `${plural(n, 'open turn')} between agents`}">${count(n, mine ? 'hot' : '')}</span>` : ''}
           </a></li>`;
@@ -1207,6 +1226,7 @@
     paint(foot, html`<span class="live ${live[0]}" title="Live updates from the files on disk"><span class="live-dot"></span>${live[1]}</span>
       ${health}
       ${costs?.since ? html`<span class="cost-today" title="What agent runs cost today: ${costTip(costs.today)}">${usd(costs.today.usd)} today</span>` : ''}
+      ${canNotify() ? html`<button class="icon-btn${notifyOn() ? ' on' : ''}" type="button" data-act="notify" title="${notifyTip()}" aria-label="${notifyTip()}" aria-pressed="${String(notifyOn())}">${icon('bell')}</button>` : ''}
       <button class="icon-btn" type="button" data-act="theme" title="Theme: ${state.theme}" aria-label="Theme: ${state.theme}">${icon(themeIcon)}</button>
       <button class="icon-btn" type="button" data-act="refresh" title="Refresh now" aria-label="Refresh">${icon('refresh')}</button>`);
   }
@@ -1221,7 +1241,108 @@
   }
 
   function setTitle(t) {
-    document.title = t ? `${t} · Software Factory` : 'Software Factory';
+    state.baseTitle = t ? `${t} · Software Factory` : 'Software Factory';
+    applyTitle();
+  }
+
+  /** The tab title, led by how many items wait on you, so a background tab shows it. */
+  function applyTitle(n = state.waitingCount) {
+    state.waitingCount = n;
+    document.title = `${n ? `(${n}) ` : ''}${state.baseTitle}`;
+  }
+
+  // ---- notifications and unread ----------------------------------------------
+
+  /** What waits on you across the board: turns addressed to you, and pending gates you own; keyed to compare refreshes. */
+  function waitingOnYou(b = state.board) {
+    const out = [];
+    for (const t of b?.teams || []) {
+      for (const th of t.threads) {
+        for (const o of th.openTurns || []) {
+          if (o.member !== 'you') continue;
+          out.push({ key: o.message.id, th, from: o.message.from, text: o.message.summary || TYPE_LABEL[o.message.type] || o.message.type, href: threadHash(th.team, th.id, `?m=${encodeURIComponent(o.message.id)}`) });
+        }
+        if (gateWait(th)?.member === 'you') out.push({ key: `gate:${th.team}/${th.id}:${th.phase}`, th, from: null, text: `The ${PHASE_LABEL[th.phase].toLowerCase()} gate waits for you`, href: threadHash(th.team, th.id) });
+      }
+    }
+    return out;
+  }
+
+  /** The items in `now` that did not wait at the last refresh; none on the first, since the backlog is not news. */
+  const newlyWaiting = (prevKeys, now) => (prevKeys ? now.filter((x) => !prevKeys.has(x.key)) : []);
+
+  const canNotify = () => typeof Notification === 'function' && window.isSecureContext !== false;
+
+  /**
+   * After each board refresh: the tab title's count, and a desktop notification for each item that
+   * newly waits on you (two, then one that counts the rest) while the board is not in front.
+   */
+  function notifyWaiting() {
+    const now = waitingOnYou();
+    const fresh = newlyWaiting(state.waitingKeys, now);
+    state.waitingKeys = new Set(now.map((x) => x.key));
+    applyTitle(now.length);
+    if (!fresh.length || !state.notify || !canNotify() || Notification.permission !== 'granted') return;
+    if (document.visibilityState === 'visible' && document.hasFocus?.()) return;
+    const shown = fresh.length > 3 ? fresh.slice(0, 2) : fresh;
+    for (const x of shown) desktopNotice(`${x.from ? `${displayName(x.from, x.th)} · ` : ''}${x.th.title}`, x.text, x.key, x.href);
+    if (fresh.length > shown.length) desktopNotice('Software Factory', `${fresh.length - shown.length} more waiting on you`, 'more', '#/inbox');
+  }
+
+  function desktopNotice(title, body, tag, href) {
+    try {
+      const n = new Notification(title, { body: plain(body).slice(0, 180), tag });
+      n.onclick = () => {
+        window.focus();
+        location.hash = href;
+        n.close();
+      };
+    } catch {
+      // the browser would not show it; the tab title still counts what waits
+    }
+  }
+
+  const notifyOn = () => state.notify && canNotify() && Notification.permission === 'granted';
+  const notifyTip = () => (notifyOn() ? 'Desktop notifications are on: click to turn them off'
+    : canNotify() && Notification.permission === 'denied' ? 'Notifications are blocked for this page in the browser\'s site settings'
+      : 'Notify me when something new waits on me');
+
+  async function toggleNotify() {
+    if (!canNotify()) return;
+    if (notifyOn()) {
+      state.notify = false;
+    } else {
+      let p = Notification.permission;
+      if (p === 'default') {
+        try {
+          p = await Notification.requestPermission();
+        } catch {
+          p = 'denied';
+        }
+      }
+      state.notify = p === 'granted';
+      toast(state.notify ? 'You get a notification when something new waits on you' : 'Notifications are blocked for this page: allow them in the browser\'s site settings', !state.notify);
+    }
+    LS.set('notify', state.notify);
+    renderRailFoot();
+  }
+
+  /** Whether a thread has activity you have not seen in this browser: a last message, not yours, newer than your last look. */
+  function isUnread(th) {
+    const last = th.lastMessage;
+    if (!last || last.from === 'you') return false;
+    const seen = state.seen[`${th.team}/${th.id}`] || state.seenSince;
+    return Boolean(seen) && Date.parse(last.ts) > Date.parse(seen);
+  }
+
+  /** Reading a thread marks it read up to its newest message; threads no longer on the board are forgotten. */
+  function markSeen(v) {
+    const ref = `${v.team}/${v.thread.id}`;
+    const ts = v.messages.reduce((a, m) => (!a || Date.parse(m.ts) > Date.parse(a) ? m.ts : a), null);
+    if (!ts || (state.seen[ref] && Date.parse(state.seen[ref]) >= Date.parse(ts))) return;
+    const live = new Set(allThreads().map((th) => `${th.team}/${th.id}`));
+    state.seen = Object.fromEntries(Object.entries({ ...state.seen, [ref]: ts }).filter(([k]) => k === ref || live.has(k)));
+    LS.set('seen', state.seen);
   }
 
   function renderMain() {
@@ -2956,6 +3077,9 @@
         LS.set('observability', state.offer);
         if (state.thread) paint($('#t-offer'), offerCard(state.thread));
         break;
+      case 'notify':
+        toggleNotify();
+        break;
       case 'theme':
         state.theme = state.theme === 'system' ? 'light' : state.theme === 'light' ? 'dark' : 'system';
         LS.set('theme', state.theme);
@@ -3407,7 +3531,7 @@
   // factory/test/ui.test.mjs runs this file in a VM with `__factoryUiTest` set:
   // it gets the pure helpers below and the page never starts.
   if (globalThis.__factoryUiTest) {
-    Object.assign(globalThis.__factoryUiTest, { shownInChat, mdInline, md, rel, dayLabel, gateWait, waitingMembers, gateEntryTurns, pendingPoints, threadCtx, typeBlock, state, NOTIFY_TYPES, GATE_ENTRY, messageEntries, heldItems, permissionCard, allowEditor, offerCard, newForm, viewNew, sidePanel, usd, costRow });
+    Object.assign(globalThis.__factoryUiTest, { shownInChat, mdInline, md, rel, dayLabel, gateWait, waitingMembers, gateEntryTurns, pendingPoints, threadCtx, typeBlock, state, NOTIFY_TYPES, GATE_ENTRY, messageEntries, heldItems, permissionCard, allowEditor, offerCard, newForm, viewNew, sidePanel, usd, costRow, waitingOnYou, newlyWaiting, notifyWaiting, isUnread, markSeen, railTeams });
     return;
   }
 
