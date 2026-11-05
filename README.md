@@ -50,7 +50,7 @@ The board opens at http://127.0.0.1:4477 and starts the autopilot. Start a threa
 
 The lead writes the brief and asks you to approve it. After that, answer what the board shows under **Needs you**.
 
-The board also shows what agent runs cost: per thread in its Details, and today's total at the bottom of the sidebar.
+The board also shows what agent runs cost: per thread in its Details, and today's total at the bottom of the sidebar. To step in yourself, **Continue in terminal** in a thread's Details copies the command that resumes an agent's session in Claude Code or Codex.
 
 A new factory also has a **Triage** thread. Paste a bug report or an error there, and an agent finds the cause and the smallest fix.
 

@@ -13,7 +13,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { execSync, execFileSync } from 'node:child_process';
 import { parseYaml, stringifyFrontmatter, parseFrontmatter } from './yaml.mjs';
-import { normalizeRoles, rolesStaffing } from './roles.mjs';
+import { normalizeRoles, rolesStaffing, leadOnOpenAI } from './roles.mjs';
 
 const LIB_DIR = path.dirname(fileURLToPath(import.meta.url));
 const CODE_FACTORY_DIR = path.resolve(LIB_DIR, '..');
@@ -781,6 +781,9 @@ function ensureAcceptance(body, fallback) {
   if (/^## Acceptance\s*$/m.test(b)) return `${b}\n`;
   return `${b}\n\n## Acceptance\n\n- [ ] _Say what done means: the behaviour, the test that proves it._\n`;
 }
+
+/** A Claude Code or Codex session id, as the autopilot saves it. */
+const SESSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function shellQuote(s) {
   return /^[A-Za-z0-9_./:@%+=,-]+$/.test(s) ? s : `'${String(s).replace(/'/g, `'\\''`)}'`;
@@ -2128,6 +2131,34 @@ class Store {
     return out;
   }
 
+  /**
+   * The agent sessions the autopilot keeps for one thread (teams/.autopilot/sessions.json), each
+   * with the command that continues it in a terminal: [{member, session, cli, command}].
+   */
+  threadSessions(ref) {
+    const th = this.thread(ref);
+    const key = `${th.team}/${th.id}`;
+    let all;
+    try {
+      all = JSON.parse(fs.readFileSync(path.join(this._abs('teams'), AUTOPILOT_DIR, 'sessions.json'), 'utf8'));
+    } catch {
+      return [];
+    }
+    const roster = new Map(this.members().map((m) => [m.id, m]));
+    const out = [];
+    for (const [member, byRef] of Object.entries(isObject(all) ? all : {})) {
+      const id = isObject(byRef) ? byRef[key] : null;
+      const m = roster.get(member);
+      if (!m || typeof id !== 'string' || !SESSION_ID_RE.test(id)) continue;
+      // The lead runs on Codex when the thread's roles put it on an OpenAI model.
+      const launch = 'launch' in m ? m.launch : member === 'openai' ? 'codex' : null;
+      const cli = launch === 'codex' || (m.role === 'lead' && leadOnOpenAI(th)) ? 'codex' : launch === 'claude' ? 'claude' : null;
+      if (!cli) continue;
+      out.push({ member, session: id, cli, command: `cd ${shellQuote(this.root)} && ${cli === 'codex' ? `codex resume ${id}` : `claude --resume ${id}`}` });
+    }
+    return out;
+  }
+
   /** Everything the board UI shows, across all teams. */
   board() {
     const nowMs = this._nowMs();
@@ -2217,6 +2248,8 @@ class Store {
       autopilot: this.autopilot(),
       // What this thread's agent runs cost: {usd, runs, unpriced}, or null before its first run.
       cost: this.costs().by_thread[`${team}/${id}`] || null,
+      // Each agent's session on this thread, and the command that continues it in a terminal.
+      sessions: this.threadSessions(`${team}/${id}`),
     };
   }
 

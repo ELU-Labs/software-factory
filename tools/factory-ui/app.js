@@ -2304,10 +2304,10 @@
   function sidePanel(v) {
     const th = v.thread;
     const parts = th.kind === 'watch'
-      ? [watchStatusCard(v), metricsCard(v), issuesCard(v), fixesCard(v), reportsCard(v)]
+      ? [watchStatusCard(v), metricsCard(v), issuesCard(v), fixesCard(v), reportsCard(v), sessionsCard(v)]
       : th.kind === 'solo'
-        ? [soloAgentCard(v), issuesCard(v)]
-        : [gatesCard(v), tasksCard(v), issuesCard(v), decisionsCard(v), membersCard(v)];
+        ? [soloAgentCard(v), sessionsCard(v), issuesCard(v)]
+        : [gatesCard(v), tasksCard(v), issuesCard(v), decisionsCard(v), membersCard(v), sessionsCard(v)];
     if (th.kind !== 'project' && v.decisions.length) parts.push(decisionsCard(v));
     return parts;
   }
@@ -2390,6 +2390,23 @@
       <dt>Updated</dt><dd class="mono" title="${absTime(th.updated)}">${rel(th.updated)}</dd>
       ${costRow(v.cost)}
     </dl>`);
+  }
+
+  /**
+   * Each agent's session on this thread, with the command that continues it in a terminal
+   * (Claude Code or Codex, where the agent left off). Hidden while that agent's run is going.
+   */
+  function sessionsCard(v) {
+    const list = v.sessions || [];
+    if (!list.length) return '';
+    const ref = `${v.team}/${v.thread.id}`;
+    const ap = v.autopilot || state.board?.autopilot;
+    return scard('Continue in terminal', '', html`<dl class="kv">${list.map((s) => {
+      const running = Boolean(ap?.alive && runOn(apRaw(s.member, ap), ref));
+      return html`<dt>${displayName(s.member, v.thread)}</dt><dd>${running
+        ? html`<span class="faint" title="Wait for its run to end: two writers in one session lose work">running now</span>`
+        : html`<button class="btn btn-outline xs" type="button" data-act="copy-resume" data-cmd="${s.command}" title="${s.command}">${icon('copy', 'xs')}Copy command</button>`}</dd>`;
+    })}</dl><p class="scard-note">Paste it in a terminal to pick up the agent's session where it left off.</p>`);
   }
 
   /** A single-agent thread's agent: model, effort, how it gets started, what it may run, its last run here. */
@@ -2966,6 +2983,9 @@
         );
         break;
       }
+      case 'copy-resume':
+        copyText(el.dataset.cmd).then(() => toast('Copied: paste it in a terminal'), () => toast('Could not copy; hover the button to see the command', true));
+        break;
       case 'goto-msg':
         e.preventDefault();
         if (state.sideOpen) {
