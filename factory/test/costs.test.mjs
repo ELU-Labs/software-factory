@@ -1,5 +1,5 @@
 // What agent runs cost: the autopilot's ledger (teams/.autopilot/costs.jsonl) totalled per thread and
-// for today, on the board's footer and each thread's Details panel.
+// for today, beside Running in the board's sidebar and in each thread's Details panel.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -80,4 +80,6 @@ test('the Details panel shows a thread\'s cost, and what it covers on hover', (t
   const solo = [].concat(hooks.sidePanel(store.threadView('triage/triage'))).map(String).join('');
   assert.match(solo, /<dt>Cost<\/dt><dd class="mono" title="">no runs yet<\/dd>/);
   assert.equal(hooks.usd(0.255), '$0.26');
+  // Today's total sits beside Running in the sidebar (the footer has no room for it).
+  assert.match(String(hooks.railRunning()), /<span class="run-cost" title="What agent runs cost today: [^"]*">\$[\d.]+ today<\/span><\/div>/);
 });

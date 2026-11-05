@@ -1105,8 +1105,9 @@
         return th ? html`<a class="run-row" href="#/t/${th}" title="${tip}">${inner}</a>` : html`<div class="run-row" title="${tip}">${inner}</div>`;
       }),
     ];
+    const costs = b.costs;
     return html`
-      <div class="rail-label run-head"><span>Running</span>${count(agents)}<span class="run-sub">${agents === 1 ? 'agent' : 'agents'}</span></div>
+      <div class="rail-label run-head"><span>Running</span>${count(agents)}<span class="run-sub">${agents === 1 ? 'agent' : 'agents'}</span>${costs?.since ? html`<span class="run-cost" title="What agent runs cost today: ${costTip(costs.today)}">${usd(costs.today.usd)} today</span>` : ''}</div>
       ${agentRows.length ? agentRows : html`<div class="run-row empty">No agent is working now</div>`}`;
   }
 
@@ -1231,10 +1232,8 @@
       health = html`<a class="health ${cls}" href="#/health" title="factory validate: ${h.errors.length} errors, ${h.warnings.length} warnings">${icon('shield', 'sm')}${label}</a>`;
     }
     const themeIcon = state.theme === 'dark' ? 'moon' : state.theme === 'light' ? 'sun' : 'system';
-    const costs = state.board?.costs;
     paint(foot, html`<span class="live ${live[0]}" title="Live updates from the files on disk"><span class="live-dot"></span>${live[1]}</span>
       ${health}
-      ${costs?.since ? html`<span class="cost-today" title="What agent runs cost today: ${costTip(costs.today)}">${usd(costs.today.usd)} today</span>` : ''}
       ${canNotify() ? html`<button class="icon-btn${notifyOn() ? ' on' : ''}" type="button" data-act="notify" title="${notifyTip()}" aria-label="${notifyTip()}" aria-pressed="${String(notifyOn())}">${icon('bell')}</button>` : ''}
       <button class="icon-btn" type="button" data-act="theme" title="Theme: ${state.theme}" aria-label="Theme: ${state.theme}">${icon(themeIcon)}</button>
       <button class="icon-btn" type="button" data-act="refresh" title="Refresh now" aria-label="Refresh">${icon('refresh')}</button>`);
@@ -1463,7 +1462,7 @@
       </div>` : html`<p class="diff-hint">Click <strong>+</strong> beside a line to note what should change. Notes go to the lead together.</p>`}
       ${files.length ? files.map((f) => html`<details class="dfile" open>
         <summary><span class="mono dpath">${f.status === 'renamed' && f.oldPath ? `${f.oldPath} → ${f.path}` : f.path}</span>${f.status !== 'modified' ? html`<span class="pill">${f.status}</span>` : ''}<span class="d-add">+${String(f.add)}</span><span class="d-del">−${String(f.del)}</span></summary>
-        ${f.binary ? html`<p class="diff-hint">Binary file.</p>` : f.hunks.length ? html`<table class="dtable">${f.hunks.map((h) => html`<tr class="dh"><td colspan="3"><code>${h.header}</code></td></tr>${h.lines.map((l) => lineRow(f, l))}`)}</table>` : ''}
+        ${f.binary ? html`<p class="diff-hint">Binary file.</p>` : f.hunks.length ? html`<table class="dtable"><colgroup><col class="dnc"><col class="dnc"><col></colgroup>${f.hunks.map((h) => html`<tr class="dh"><td colspan="3"><code>${h.header}</code></td></tr>${h.lines.map((l) => lineRow(f, l))}`)}</table>` : ''}
       </details>`) : html`<div class="empty">${icon('branch')}<h3>No changes yet</h3><p>${data.branch} has nothing that ${data.base} does not.</p></div>`}
     </div>`;
   }
@@ -2260,7 +2259,7 @@
         <div class="tabs" role="tablist">
           <a class="tab${tab === 'chat' ? ' on' : ''}" role="tab" aria-selected="${String(tab === 'chat')}" href="${base}">${icon('chat', 'sm')}Chat${count(nMsgs)}</a>
           <a class="tab${tab === 'doc' ? ' on' : ''}" role="tab" aria-selected="${String(tab === 'doc')}" href="${base}?tab=doc">${icon('doc', 'sm')}${th.kind === 'watch' ? 'Runbook' : th.kind === 'solo' ? 'Instructions' : 'Brief & plan'}</a>
-          ${th.kind === 'solo' ? '' : html`<a class="tab${tab === 'diff' ? ' on' : ''}" role="tab" aria-selected="${String(tab === 'diff')}" href="${base}?tab=diff" title="What the branch ${th.branch || ''} changes">${icon('branch', 'sm')}Changes${count(diffNotes(`${v.team}/${th.id}`).length)}</a>`}
+          ${th.kind === 'solo' ? '' : html`<a class="tab${tab === 'diff' ? ' on' : ''}" role="tab" aria-selected="${String(tab === 'diff')}" href="${base}?tab=diff" title="What the branch ${th.branch || ''} changes">${icon('branch', 'sm')}Changes${diffNotes(`${v.team}/${th.id}`).length ? count(diffNotes(`${v.team}/${th.id}`).length) : ''}</a>`}
         </div>
         <button class="icon-btn details-btn" type="button" data-act="open-side" title="Details" aria-label="Show details">${icon('panel')}</button>
       </div>
@@ -3890,7 +3889,7 @@
   // factory/test/ui.test.mjs runs this file in a VM with `__factoryUiTest` set:
   // it gets the pure helpers below and the page never starts.
   if (globalThis.__factoryUiTest) {
-    Object.assign(globalThis.__factoryUiTest, { shownInChat, mdInline, md, rel, dayLabel, gateWait, waitingMembers, gateEntryTurns, pendingPoints, threadCtx, typeBlock, state, NOTIFY_TYPES, GATE_ENTRY, messageEntries, heldItems, permissionCard, allowEditor, offerCard, newForm, viewNew, sidePanel, usd, costRow, waitingOnYou, newlyWaiting, notifyWaiting, isUnread, markSeen, railTeams, jumpItems, parseDiff, diffView, notesMessage, notesRequest, threadHead });
+    Object.assign(globalThis.__factoryUiTest, { shownInChat, mdInline, md, rel, dayLabel, gateWait, waitingMembers, gateEntryTurns, pendingPoints, threadCtx, typeBlock, state, NOTIFY_TYPES, GATE_ENTRY, messageEntries, heldItems, permissionCard, allowEditor, offerCard, newForm, viewNew, sidePanel, usd, costRow, waitingOnYou, newlyWaiting, notifyWaiting, isUnread, markSeen, railTeams, jumpItems, parseDiff, diffView, notesMessage, notesRequest, threadHead, railRunning });
     return;
   }
 
