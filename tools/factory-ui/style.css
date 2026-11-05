@@ -235,6 +235,30 @@ h1, h2, h3, h4, p { margin: 0; }
 .nav-item .count { margin-left: auto; }
 button.nav-item { width: 100%; background: none; font-family: inherit; cursor: pointer; text-align: left; }
 .nav-item kbd { margin-left: auto; font: 500 10.5px/1 var(--mono); color: var(--text-faint); }
+/* Changes tab: the branch's diff, with line notes */
+.diff { padding: 12px 16px 24px; display: grid; gap: 10px; align-content: start; }
+.diff-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12.5px; color: var(--text-muted); }
+.diff-bar .btn { margin-left: auto; }
+.d-add { color: var(--success); font-family: var(--mono); font-size: 12px; }
+.d-del { color: var(--danger); font-family: var(--mono); font-size: 12px; }
+.diff-hint, .diff-warn { margin: 0; font-size: 12.5px; color: var(--text-faint); display: flex; align-items: center; gap: 6px; }
+.diff-send { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--glass-border); background: var(--surface); font-size: 13px; }
+.diff-send > span:first-child { margin-right: auto; }
+.dfile { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--surface); }
+.dfile > summary { display: flex; align-items: center; gap: 8px; padding: 8px 12px; cursor: pointer; background: var(--raised); font-size: 12.5px; }
+.dpath { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dtable { width: 100%; border-collapse: collapse; font: 12px/1.5 var(--mono); table-layout: fixed; }
+.dtable .dn { width: 44px; padding: 0 6px; text-align: right; color: var(--text-faint); user-select: none; vertical-align: top; position: relative; }
+.dtable .dc { padding: 0 8px; white-space: pre-wrap; word-break: break-word; }
+.dtable .dc code { font: inherit; background: none; padding: 0; }
+.dl.add { background: var(--success-bg); }
+.dl.del { background: var(--danger-bg); }
+.dh td { padding: 2px 8px; color: var(--text-faint); background: var(--hover); }
+.dl-note { position: absolute; left: -2px; top: 1px; display: none; width: 16px; height: 16px; padding: 0; border: 0; border-radius: 4px; background: var(--brand); color: #fff; cursor: pointer; place-items: center; }
+.dl:hover .dl-note, .dl-note:focus-visible { display: grid; }
+.dnote td { padding: 6px 8px 8px 52px; background: var(--raised); }
+.dnote-box { display: flex; gap: 6px; align-items: flex-start; }
+.dnote-box textarea { flex: 1; min-height: 52px; font-family: inherit; font-size: 13px; }
 /* Jump to (Cmd-K) */
 .jump-backdrop { padding-top: 14vh; }
 .jump {

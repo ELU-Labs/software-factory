@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { execSync, execFileSync } from 'node:child_process';
+import { execSync, execFileSync, spawnSync } from 'node:child_process';
 import { parseYaml, stringifyFrontmatter, parseFrontmatter } from './yaml.mjs';
 import { normalizeRoles, rolesStaffing, leadOnOpenAI } from './roles.mjs';
 
@@ -51,6 +51,8 @@ export const MESSAGE_TYPES = Object.freeze(['kickoff', 'proposal', 'review', 're
 export const VERDICTS = Object.freeze(['approve', 'changes_requested', 'blocked']);
 /** Review point and issue severities, most severe first. */
 export const SEVERITIES = Object.freeze(['high', 'medium', 'low', 'nit']);
+/** The most of a thread's diff the board shows; a longer one is cut at a line and marked truncated. */
+export const DIFF_MAX_CHARS = 1_000_000;
 /** Lead stances on a review point. */
 export const STANCES = Object.freeze(['accepted', 'rejected', 'deferred']);
 /** Task result outcomes. */
@@ -2313,6 +2315,32 @@ class Store {
     const setup = this._teamSetup(th.team);
     if (setup) commands.push(`cd ${w} && ${setup}`);
     return { branch, path: wt, exists, remote, commands, setup, note: 'The shared checkout never leaves main: build in the worktree, never switch branches in the shared checkout.' };
+  }
+
+  /**
+   * What the thread's branch changes, for review on the board: `git diff` from where the branch
+   * left main (origin/main when fetched, else main) to the branch tip, committed work only.
+   * Read-only; external diff drivers and textconv never run.
+   * @returns {{branch: string, base: string|null, exists: boolean, diff: string, truncated: boolean}}
+   */
+  threadDiff(ref) {
+    const th = this.thread(ref);
+    const branch = `factory/${th.team}/${th.id}`;
+    const git = (args, maxBuffer = 1024 * 1024) => spawnSync('git', ['-C', this.root, ...args], { encoding: 'utf8', timeout: 30_000, maxBuffer, stdio: ['ignore', 'pipe', 'pipe'] });
+    const has = (name) => git(['rev-parse', '--verify', '--quiet', name]).status === 0;
+    const tip = has(`refs/heads/${branch}`) ? branch : has(`refs/remotes/origin/${branch}`) ? `origin/${branch}` : null;
+    if (!tip) return { branch, base: null, exists: false, diff: '', truncated: false };
+    const base = has('refs/remotes/origin/main') ? 'origin/main' : has('refs/heads/main') ? 'main' : null;
+    if (!base) fail('not_found', `no main branch to compare ${branch} with (looked for origin/main and main)`);
+    const r = git(['diff', '--no-color', '--no-ext-diff', '--no-textconv', '-M', `${base}...${tip}`, '--'], DIFF_MAX_CHARS * 2);
+    const overflow = r.error?.code === 'ENOBUFS';
+    if ((r.error && !overflow) || (!overflow && r.status !== 0)) {
+      fail('conflict', `git diff ${base}...${tip} failed: ${String(r.stderr || r.error?.message || '').trim().split('\n').pop()}`);
+    }
+    let diff = String(r.stdout || '');
+    const truncated = overflow || diff.length > DIFF_MAX_CHARS;
+    if (truncated) diff = diff.slice(0, Math.max(0, diff.lastIndexOf('\n', DIFF_MAX_CHARS) + 1));
+    return { branch, base, exists: true, diff, truncated };
   }
 
   /** A team's worktree setup command (team.md `setup`), or null. */

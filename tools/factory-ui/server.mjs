@@ -467,6 +467,12 @@ export function startServer({ root, port = 4477, host = '127.0.0.1', allowHosts 
       return { member, generated: new Date().toISOString(), turns: s.openTurns({ member }) };
     },
     '/api/validate': () => store().validate(),
+    // The Changes tab: what the thread's branch changes against main.
+    '/api/diff': (q) => {
+      const ref = str(q.get('ref'));
+      if (!ref) throw new FactoryError('usage', 'name the thread: /api/diff?ref=<team>/<thread>');
+      return store().threadDiff(ref);
+    },
     // A GitHub issue for the New thread form: its title, and the request a thread started from it carries.
     '/api/issue': (q) => {
       const issue = fetchIssue(factoryRoot, str(q.get('ref')) || '');

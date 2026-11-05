@@ -179,6 +179,10 @@
     seenSince: LS.get('seenSince', null),
     /** What waited on you at the last refresh (keys), so a notification goes out only for what is new; null before the first. */
     waitingKeys: null,
+    /** The Changes tab's diff: {ref, loading, data, error}; fetched when the tab opens and on Refresh. */
+    diff: null,
+    /** Line notes on a thread's changes, kept until sent ({ref: [{id, path, line, side, code, text}]}). */
+    diffNotes: LS.get('diffNotes', {}) || {},
     /** The Cmd-K jump box while open: {q, i, items}. */
     jump: null,
     waitingCount: 0,
@@ -784,7 +788,7 @@
     });
     const q = new URLSearchParams(query || '');
     if (parts[0] === 't' && parts[1] && parts[2]) {
-      return { name: 'thread', ref: `${parts[1]}/${parts[2]}`, focus: q.get('m'), findRef: q.get('ref'), tab: q.get('tab') === 'doc' ? 'doc' : 'chat' };
+      return { name: 'thread', ref: `${parts[1]}/${parts[2]}`, focus: q.get('m'), findRef: q.get('ref'), tab: ['doc', 'diff'].includes(q.get('tab')) ? q.get('tab') : 'chat' };
     }
     if (parts[0] === 'tasks') return { name: 'tasks' };
     if (parts[0] === 'inbox') return { name: 'inbox', member: parts[1] || null };
@@ -1330,6 +1334,203 @@
     }
     LS.set('notify', state.notify);
     renderRailFoot();
+  }
+
+  // ---- changes (diff review) -----------------------------------------------------
+
+  /**
+   * A unified diff as files: [{path, oldPath, status, binary, add, del, hunks: [{header, lines: [{kind, text, old, new}]}]}].
+   * `kind` is '+', '-' or ' '; `old` / `new` are the line's numbers on each side (null where it has none).
+   */
+  function parseDiff(text) {
+    const files = [];
+    let f = null;
+    let h = null;
+    let o = 0;
+    let n = 0;
+    const unq = (s) => s.replace(/^"(.*)"$/, '$1').replace(/^[ab]\//, '');
+    for (const line of String(text || '').split('\n')) {
+      if (line.startsWith('diff --git ')) {
+        const m = /^diff --git (.+?) (b\/.+|"b\/.+")$/.exec(line);
+        f = { path: m ? unq(m[2]) : line.slice(11), oldPath: m ? unq(m[1]) : null, status: 'modified', binary: false, add: 0, del: 0, hunks: [] };
+        files.push(f);
+        h = null;
+        continue;
+      }
+      if (!f) continue;
+      if (!h) {
+        if (line.startsWith('new file mode')) f.status = 'added';
+        else if (line.startsWith('deleted file mode')) f.status = 'deleted';
+        else if (line.startsWith('rename to ')) {
+          f.status = 'renamed';
+          f.path = line.slice(10);
+        } else if (line.startsWith('rename from ')) f.oldPath = line.slice(12);
+        else if (line.startsWith('Binary files ')) f.binary = true;
+      }
+      const hm = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)$/.exec(line);
+      if (hm) {
+        o = Number(hm[1]);
+        n = Number(hm[2]);
+        h = { header: line, lines: [] };
+        f.hunks.push(h);
+        continue;
+      }
+      if (!h) continue;
+      const k = line[0];
+      if (k === '+') {
+        h.lines.push({ kind: '+', text: line.slice(1), old: null, new: n++ });
+        f.add += 1;
+      } else if (k === '-') {
+        h.lines.push({ kind: '-', text: line.slice(1), old: o++, new: null });
+        f.del += 1;
+      } else if (k === ' ') {
+        h.lines.push({ kind: ' ', text: line.slice(1), old: o++, new: n++ });
+      }
+    }
+    return files;
+  }
+
+  const diffNotes = (ref) => state.diffNotes[ref] || [];
+
+  /** Keep the notes for threads still on the board, in this browser. */
+  function saveDiffNotes() {
+    const live = state.board ? new Set(allThreads().map((th) => `${th.team}/${th.id}`)) : null;
+    state.diffNotes = Object.fromEntries(Object.entries(state.diffNotes).filter(([k, xs]) => xs.length && (!live || live.has(k))));
+    LS.set('diffNotes', state.diffNotes);
+  }
+
+  /** Where a note points: `path:line`, or the line's old number when it was removed. */
+  const noteAt = (x) => (x.side === 'old' ? `${x.path} (removed line ${x.line})` : `${x.path}:${x.line}`);
+
+  async function loadDiff(ref) {
+    state.diff = { ref, loading: true, data: state.diff?.ref === ref ? state.diff.data : null, error: null };
+    try {
+      const data = await api(`/api/diff?ref=${encodeURIComponent(ref)}`);
+      if (state.diff?.ref === ref) state.diff = { ref, loading: false, data, error: null };
+    } catch (e) {
+      if (state.diff?.ref === ref) state.diff = { ref, loading: false, data: null, error: e.message };
+    }
+    if (state.route.name === 'thread' && state.route.ref === ref && state.route.tab === 'diff') render();
+  }
+
+  /** Who the notes go to: as a Request changes review when you own the current gate, else a question to the lead. */
+  function notesTarget(th) {
+    if (ownsGate(th)) return { review: true, label: `Request changes at ${PHASE_LABEL[th.phase].toLowerCase()}` };
+    const to = defaultTo(th);
+    return to.length ? { review: false, to, label: `Send to ${displayName(to[0], th)}` } : null;
+  }
+
+  function diffView(v) {
+    const th = v.thread;
+    const ref = `${v.team}/${th.id}`;
+    const d = state.diff?.ref === ref ? state.diff : null;
+    const data = d?.data;
+    if (!data) {
+      if (d?.error) return html`<div class="empty">${icon('alert')}<h3>Could not read the changes</h3><p>${d.error}</p><p><button class="btn btn-outline sm" type="button" data-act="diff-refresh">Try again</button></p></div>`;
+      return html`<div class="empty">Reading the changes…</div>`;
+    }
+    if (!data.exists) return html`<div class="empty">${icon('branch')}<h3>No branch yet</h3><p>${data.branch} appears once the lead creates the worktree and builders commit.</p></div>`;
+    const files = parseDiff(data.diff);
+    const notes = diffNotes(ref);
+    const byLine = new Map();
+    for (const x of notes) byLine.set(`${x.path}\n${x.side}\n${x.line}`, [...(byLine.get(`${x.path}\n${x.side}\n${x.line}`) || []), x]);
+    const add = files.reduce((a, f) => a + f.add, 0);
+    const del = files.reduce((a, f) => a + f.del, 0);
+    const target = notesTarget(th);
+    const noteRows = (path, side, line) => (byLine.get(`${path}\n${side}\n${line}`) || []).map((x) => html`<tr class="dnote"><td colspan="3"><div class="dnote-box">
+      <textarea class="field" id="dn-${x.id}" rows="2" data-input="diff-note" data-id="${x.id}" placeholder="What should change here?" aria-label="Note on ${noteAt(x)}">${x.text}</textarea>
+      <button class="icon-btn" type="button" data-act="diff-note-del" data-id="${x.id}" title="Remove this note" aria-label="Remove this note">${icon('x', 'sm')}</button>
+    </div></td></tr>`);
+    const lineRow = (f, l) => {
+      const side = l.kind === '-' ? 'old' : 'new';
+      const no = side === 'old' ? l.old : l.new;
+      return html`<tr class="dl${l.kind === '+' ? ' add' : l.kind === '-' ? ' del' : ''}">
+        <td class="dn">${l.old ?? ''}</td><td class="dn">${l.new ?? ''}<button class="dl-note" type="button" data-act="diff-note" data-path="${f.path}" data-side="${side}" data-line="${String(no)}" title="Add a note on this line" aria-label="Add a note on line ${String(no)}">${icon('plus', 'xs')}</button></td>
+        <td class="dc"><code>${l.kind}${l.text}</code></td>
+      </tr>${noteRows(f.path, side, no)}`;
+    };
+    return html`<div class="diff">
+      <div class="diff-bar">
+        <span class="mono">${data.base}...${data.branch}</span>
+        <span>${plural(files.length, 'file')} changed</span><span class="d-add">+${String(add)}</span><span class="d-del">−${String(del)}</span>
+        <button class="btn btn-ghost xs" type="button" data-act="diff-refresh"${d.loading ? raw(' disabled') : ''}>${icon('refresh', 'xs')}${d.loading ? 'Refreshing…' : 'Refresh'}</button>
+      </div>
+      ${data.truncated ? html`<p class="diff-warn">${icon('alert', 'sm')}The diff is too long to show in full: the last files are cut. Read the rest with <code>git diff ${data.base}...${data.branch}</code>.</p>` : ''}
+      ${notes.length ? html`<div class="diff-send">
+        <span>${plural(notes.length, 'note')} on these changes</span>
+        <button class="btn btn-ghost xs" type="button" data-act="diff-notes-clear">Discard</button>
+        ${target ? html`<button class="btn btn-primary xs" type="button" data-act="diff-notes-send"${state.sending ? raw(' disabled') : ''}>${icon('send', 'xs')}${target.label}</button>` : html`<span class="faint">This thread has no lead to send them to.</span>`}
+      </div>` : html`<p class="diff-hint">Click <strong>+</strong> beside a line to note what should change. Notes go to the lead together.</p>`}
+      ${files.length ? files.map((f) => html`<details class="dfile" open>
+        <summary><span class="mono dpath">${f.status === 'renamed' && f.oldPath ? `${f.oldPath} → ${f.path}` : f.path}</span>${f.status !== 'modified' ? html`<span class="pill">${f.status}</span>` : ''}<span class="d-add">+${String(f.add)}</span><span class="d-del">−${String(f.del)}</span></summary>
+        ${f.binary ? html`<p class="diff-hint">Binary file.</p>` : f.hunks.length ? html`<table class="dtable">${f.hunks.map((h) => html`<tr class="dh"><td colspan="3"><code>${h.header}</code></td></tr>${h.lines.map((l) => lineRow(f, l))}`)}</table>` : ''}
+      </details>`) : html`<div class="empty">${icon('branch')}<h3>No changes yet</h3><p>${data.branch} has nothing that ${data.base} does not.</p></div>`}
+    </div>`;
+  }
+
+  function addDiffNote(el) {
+    const ref = state.route.ref;
+    const files = parseDiff(state.diff?.data?.diff);
+    const line = Number(el.dataset.line);
+    const side = el.dataset.side === 'old' ? 'old' : 'new';
+    const f = files.find((x) => x.path === el.dataset.path);
+    const l = f?.hunks.flatMap((h) => h.lines).find((x) => (side === 'old' ? x.old === line && x.kind === '-' : x.new === line));
+    const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    state.diffNotes[ref] = [...diffNotes(ref), { id, path: el.dataset.path, line, side, code: l ? l.text : '', text: '' }];
+    saveDiffNotes();
+    render();
+    $(`#dn-${id}`)?.focus();
+  }
+
+  /** The notes as one message: each `path:line`, the code it is on, and what should change. */
+  function notesMessage(th, notes) {
+    const lines = [`Notes on the changes in ${th.branch || 'this thread\'s branch'}:`, ''];
+    for (const x of notes) {
+      lines.push(`- \`${noteAt(x)}\`${x.code.trim() ? `: \`${x.code.trim().replace(/`/g, "'").slice(0, 160)}\`` : ''}`);
+      lines.push(`  ${x.text.trim().replace(/\n+/g, ' ')}`);
+    }
+    return lines.join('\n');
+  }
+
+  /** The request that sends the notes (see notesTarget), or null when nobody can take them. */
+  function notesRequest(v, notes) {
+    const th = v.thread;
+    const ref = `${v.team}/${th.id}`;
+    const target = notesTarget(th);
+    if (!target || !notes.length) return null;
+    if (target.review) {
+      return { path: '/api/review', body: { ref, verdict: 'changes_requested', points: notes.map((x) => ({ severity: 'medium', text: `\`${noteAt(x)}\`: ${x.text.trim()}` })), body: '' } };
+    }
+    return { path: '/api/post', body: { ref, type: 'question', to: target.to, body: notesMessage(th, notes) } };
+  }
+
+  async function sendDiffNotes() {
+    const v = state.thread;
+    if (!v || state.sending) return;
+    const ref = `${v.team}/${v.thread.id}`;
+    const th = v.thread;
+    const notes = diffNotes(ref);
+    if (notes.some((x) => !x.text.trim())) {
+      toast('Write each note first, or remove the empty one', true);
+      $(`#dn-${notes.find((x) => !x.text.trim()).id}`)?.focus();
+      return;
+    }
+    const target = notesTarget(th);
+    const req = notesRequest(v, notes);
+    if (!req) return;
+    state.sending = true;
+    render();
+    try {
+      await api(req.path, req.body);
+      delete state.diffNotes[ref];
+      saveDiffNotes();
+      toast(target.review ? `Requested changes with ${plural(notes.length, 'note')}` : `Sent ${plural(notes.length, 'note')} to ${displayName(target.to[0], th)}`);
+    } catch (e) {
+      toast(e.message, true);
+    } finally {
+      state.sending = false;
+    }
+    await refresh();
   }
 
   // ---- quick jump (Cmd-K) ------------------------------------------------------
@@ -2059,6 +2260,7 @@
         <div class="tabs" role="tablist">
           <a class="tab${tab === 'chat' ? ' on' : ''}" role="tab" aria-selected="${String(tab === 'chat')}" href="${base}">${icon('chat', 'sm')}Chat${count(nMsgs)}</a>
           <a class="tab${tab === 'doc' ? ' on' : ''}" role="tab" aria-selected="${String(tab === 'doc')}" href="${base}?tab=doc">${icon('doc', 'sm')}${th.kind === 'watch' ? 'Runbook' : th.kind === 'solo' ? 'Instructions' : 'Brief & plan'}</a>
+          ${th.kind === 'solo' ? '' : html`<a class="tab${tab === 'diff' ? ' on' : ''}" role="tab" aria-selected="${String(tab === 'diff')}" href="${base}?tab=diff" title="What the branch ${th.branch || ''} changes">${icon('branch', 'sm')}Changes${count(diffNotes(`${v.team}/${th.id}`).length)}</a>`}
         </div>
         <button class="icon-btn details-btn" type="button" data-act="open-side" title="Details" aria-label="Show details">${icon('panel')}</button>
       </div>
@@ -2130,6 +2332,12 @@
     const body = $('#t-body');
     if (state.route.tab === 'doc') {
       setHtml(body, html`<div class="doc"><div class="md">${raw(md(v.thread.body || '_This thread has no document yet._'))}</div></div>`);
+      return;
+    }
+    if (state.route.tab === 'diff') {
+      const ref = `${v.team}/${v.thread.id}`;
+      if (state.diff?.ref !== ref) loadDiff(ref);
+      paint(body, diffView(v), { fields: 'keep' });
       return;
     }
     let box = $('#msgs');
@@ -2761,7 +2969,7 @@
     }
     // The doc tab is for reading; the composer stays only when you own the
     // current gate, so the brief (or plan) can be approved where it is read.
-    box.hidden = state.route.tab === 'doc' && !ownsGate(th);
+    box.hidden = state.route.tab !== 'chat' && !ownsGate(th);
     const ta = $('#c-body');
     ta.placeholder = d.replyTo ? 'Write your reply…' : th.kind === 'solo' && th.owner ? `Ask ${displayName(th.owner, th)}: what should it do?` : `Message ${th.title} as the product owner…`;
     paint($('#c-gate'), gateStrip(th, d), { fields: 'keep' });
@@ -3163,6 +3371,26 @@
       case 'jump-open':
         openJump();
         break;
+      case 'diff-refresh':
+        if (state.route.ref) loadDiff(state.route.ref);
+        render();
+        break;
+      case 'diff-note':
+        addDiffNote(el);
+        break;
+      case 'diff-note-del':
+        state.diffNotes[state.route.ref] = diffNotes(state.route.ref).filter((x) => x.id !== el.dataset.id);
+        saveDiffNotes();
+        render();
+        break;
+      case 'diff-notes-clear':
+        delete state.diffNotes[state.route.ref];
+        saveDiffNotes();
+        render();
+        break;
+      case 'diff-notes-send':
+        sendDiffNotes();
+        break;
       case 'jump-close':
         if (e.target === el) closeJump();
         break;
@@ -3422,6 +3650,14 @@
 
   document.addEventListener('input', (e) => {
     const el = e.target;
+    if (el.dataset?.input === 'diff-note') {
+      const x = diffNotes(state.route.ref).find((n) => n.id === el.dataset.id);
+      if (x) {
+        x.text = el.value;
+        saveDiffNotes();
+      }
+      return;
+    }
     if (el.id === 'jump-input' && state.jump) {
       state.jump.q = el.value;
       state.jump.i = 0;
@@ -3654,7 +3890,7 @@
   // factory/test/ui.test.mjs runs this file in a VM with `__factoryUiTest` set:
   // it gets the pure helpers below and the page never starts.
   if (globalThis.__factoryUiTest) {
-    Object.assign(globalThis.__factoryUiTest, { shownInChat, mdInline, md, rel, dayLabel, gateWait, waitingMembers, gateEntryTurns, pendingPoints, threadCtx, typeBlock, state, NOTIFY_TYPES, GATE_ENTRY, messageEntries, heldItems, permissionCard, allowEditor, offerCard, newForm, viewNew, sidePanel, usd, costRow, waitingOnYou, newlyWaiting, notifyWaiting, isUnread, markSeen, railTeams, jumpItems });
+    Object.assign(globalThis.__factoryUiTest, { shownInChat, mdInline, md, rel, dayLabel, gateWait, waitingMembers, gateEntryTurns, pendingPoints, threadCtx, typeBlock, state, NOTIFY_TYPES, GATE_ENTRY, messageEntries, heldItems, permissionCard, allowEditor, offerCard, newForm, viewNew, sidePanel, usd, costRow, waitingOnYou, newlyWaiting, notifyWaiting, isUnread, markSeen, railTeams, jumpItems, parseDiff, diffView, notesMessage, notesRequest, threadHead });
     return;
   }
 
