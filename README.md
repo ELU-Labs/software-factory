@@ -52,6 +52,8 @@ The board opens at http://127.0.0.1:4477 and starts the autopilot. Start a threa
 
 The lead writes the brief and asks you to approve it. After that, answer what the board shows under **Needs you**.
 
+A new factory also has a **Triage** thread. Paste a bug report or an error there, and an agent finds the cause and the smallest fix.
+
 Commit `factory/`, `tools/factory-ui/` and `.claude/` if you want them in the repo. `teams/` ignores itself and stays on your machine.
 
 ## Commands

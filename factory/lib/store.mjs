@@ -192,6 +192,18 @@ Start a team with \`node factory/bin/factory.mjs team new <team> --title "<Title
 `;
 const DEFAULT_TEAMS_GITIGNORE = '# Factory state stays on this machine: everything here is ignored except this file and README.md.\n*\n!.gitignore\n!README.md\n';
 
+/** The single-agent thread a new factory starts with (`factory init`): bug reports in, causes out. */
+export const TRIAGE_REF = 'triage/triage';
+const TRIAGE_INSTRUCTIONS = [
+  'For each bug report, error or stack trace the owner posts:',
+  '',
+  '- Find where it comes from in the code: the file and line, and the path that leads there.',
+  '- Say how sure you are and why. Label a cause you could not confirm as a guess.',
+  '- Propose the smallest fix, and the test that would catch it.',
+  '- If it is not a bug in this repo (configuration, a dependency, already fixed on main), say so.',
+  '- Open an issue (`issue new`) only when the owner asks. The lead fixes it on a project thread.',
+].join('\n');
+
 // ---------------------------------------------------------------------------
 // Errors and small helpers
 // ---------------------------------------------------------------------------
@@ -2224,10 +2236,11 @@ class Store {
   /**
    * Create teams/ (README.md, .gitignore) and copy factory/members.yaml and
    * factory/templates/ from the code's own factory dir when they are missing.
-   * Idempotent; needs no actor.
+   * With `triage` (the `init` command), a root with no teams also gets the
+   * Triage thread (TRIAGE_REF). Idempotent; needs no actor.
    * @returns {{root: string, created: string[], events: []}}
    */
-  init() {
+  init({ triage = false } = {}) {
     this._guardWritable();
     const created = [];
     const copyIfMissing = (dest, source, fallback) => {
@@ -2250,7 +2263,33 @@ class Store {
       templates = [];
     }
     for (const name of templates) copyIfMissing(this._abs('factory', 'templates', name), path.join(tplDir, name));
+    if (triage) {
+      const file = this._seedTriage();
+      if (file) created.push(file);
+    }
     return { root: this.root, created, events: [] };
+  }
+
+  /**
+   * The Triage thread, a single-agent thread written as `you`: only on a root
+   * with no teams and no archived Triage team (so an archived one stays gone),
+   * and only when the roster has a single agent. Its creation opens no turn,
+   * so no agent starts until the owner posts there.
+   * @returns {string|null} the thread file it created
+   */
+  _seedTriage() {
+    if (this._teamIds().length) return null;
+    const [team, id] = TRIAGE_REF.split('/');
+    let archived = [];
+    try {
+      archived = fs.readdirSync(this._abs('teams', ARCHIVE_DIR)).filter((n) => n.startsWith(`${team}-`));
+    } catch {
+      archived = [];
+    }
+    if (archived.length || !this.members().some(isSoloAgent)) return null;
+    this.createThread({ as: 'you', ref: TRIAGE_REF, title: 'Triage', teamTitle: 'Triage', kind: 'solo' });
+    this.editSection({ as: 'you', ref: TRIAGE_REF, section: 'Instructions', body: TRIAGE_INSTRUCTIONS });
+    return this._rel(path.join(this._teamDir(team), 'threads', `${id}.md`));
   }
 
   /**

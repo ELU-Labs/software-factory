@@ -107,6 +107,7 @@ Three kinds of thread.
 - `review`, `respond`, `advance`, `task new` and `watch run` are errors on it.
 - An issue opened there is fixed the way a watch issue is: on a project thread of the same team (§12, "Fixing a watch issue"). When that thread is signed off, the issue's `fixed` event goes to `you`: once it ships, ask the agent there to check it, and it runs `verify`.
 - Its agent's role file is `factory/roles/solo.md`.
+- `factory init` starts a factory that has no teams with one: `triage/triage`, whose Instructions ask its agent to find the cause and the smallest fix of each bug report the owner posts. Creating it opens no turn. An archived Triage team is not created again.
 
 Defaults on `factory thread new`: lead = team lead; members = `[you, lead, opus-1, opus-2, openai, grok]` for projects, `[you, lead, owner]` for watch threads, `[you, owner]` for single-agent threads (the owner is the lead). A team or thread lead (`--lead`) is a member whose role is `lead`, or `you`: a reviewer, gatekeeper or builder leading a thread would answer its own reviews.
 

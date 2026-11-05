@@ -648,8 +648,8 @@ const COMMANDS = [
   },
   // ---- write ----
   {
-    words: ['init'], usage: 'init', about: 'Create teams/ and copy the roster and templates into the root when missing (idempotent; no --as).',
-    run: ({ store }) => store.init(),
+    words: ['init'], usage: 'init', about: 'Create teams/ and copy the roster and templates into the root when missing, and start a new factory with its Triage thread (idempotent; no --as).',
+    run: ({ store }) => store.init({ triage: true }),
     text: (r) => (r.created.length ? `Initialised ${r.root}:\n${r.created.map((f) => `  + ${f}`).join('\n')}` : `${r.root} is already initialised.`),
   },
   {

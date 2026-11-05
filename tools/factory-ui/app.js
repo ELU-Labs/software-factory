@@ -169,6 +169,8 @@
     /** Long message bodies the reader unfolded (ids); the rest show their first lines. */
     unfolded: new Set(),
     theme: LS.get('theme', 'system'),
+    /** The answer to the Triage thread's observability offer ('yes' or 'no'); null until the owner picks. */
+    offer: LS.get('observability', null),
     sideOpen: false,
     sending: false,
     /** A Stop waiting for its confirming click. */
@@ -1756,6 +1758,7 @@
       setHtml(main, html`<div class="thread-view" data-ref="${r.ref}">
         <section class="chat" aria-label="Thread">
           <div id="t-head"></div>
+          <div id="t-offer"></div>
           <div id="t-banner"></div>
           <div id="t-presence"></div>
           <div class="t-body" id="t-body"><div class="empty">Loading…</div></div>
@@ -1772,6 +1775,7 @@
     if (!v) {
       if (state.threadError) {
         clearHtml($('#t-head'));
+        clearHtml($('#t-offer'));
         clearHtml($('#t-banner'));
         clearHtml($('#t-presence'));
         setHtml($('#t-body'), html`<div class="empty">${icon('alert')}<h3>Could not open ${r.ref}</h3><p>${state.threadError.message}</p><p><a class="btn btn-outline sm" href="#/board">Back to the board</a></p></div>`);
@@ -1783,6 +1787,7 @@
     }
     setTitle(v.thread.title);
     paint($('#t-head'), threadHead(v));
+    paint($('#t-offer'), offerCard(v));
     paint($('#t-banner'), banner(v));
     paint($('#t-presence'), threadPresence(v));
     renderComposer(v);
@@ -1817,6 +1822,22 @@
         <button class="icon-btn details-btn" type="button" data-act="open-side" title="Details" aria-label="Show details">${icon('panel')}</button>
       </div>
     </header>`;
+  }
+
+  /** The Triage thread init creates (TRIAGE_REF in factory/lib/store.mjs), and where its offer's Yes goes. */
+  const TRIAGE_REF = 'triage/triage';
+  const OBSERVABILITY_URL = 'https://elu.dev/promo';
+
+  /** On the Triage thread, until the owner answers it: an offer of live product observability. Yes opens it in a new tab. */
+  function offerCard(v) {
+    if (state.offer || `${v.team}/${v.thread.id}` !== TRIAGE_REF) return '';
+    return html`<div class="offer" role="region" aria-label="Live product observability">
+      <div class="offer-text"><strong>Want live product observability?</strong><span>See the bugs real users hit, before they report them.</span></div>
+      <div class="offer-actions">
+        <a class="btn btn-primary sm" href="${OBSERVABILITY_URL}" target="_blank" rel="noopener" data-act="offer" data-choice="yes">Yes</a>
+        <button class="btn btn-outline sm" type="button" data-act="offer" data-choice="no">No</button>
+      </div>
+    </div>`;
   }
 
   /**
@@ -2871,6 +2892,11 @@
           renderRailFoot();
         });
         break;
+      case 'offer':
+        state.offer = el.dataset.choice === 'yes' ? 'yes' : 'no';
+        LS.set('observability', state.offer);
+        if (state.thread) paint($('#t-offer'), offerCard(state.thread));
+        break;
       case 'theme':
         state.theme = state.theme === 'system' ? 'light' : state.theme === 'light' ? 'dark' : 'system';
         LS.set('theme', state.theme);
@@ -3311,7 +3337,7 @@
   // factory/test/ui.test.mjs runs this file in a VM with `__factoryUiTest` set:
   // it gets the pure helpers below and the page never starts.
   if (globalThis.__factoryUiTest) {
-    Object.assign(globalThis.__factoryUiTest, { shownInChat, mdInline, md, rel, dayLabel, gateWait, waitingMembers, gateEntryTurns, pendingPoints, threadCtx, typeBlock, state, NOTIFY_TYPES, GATE_ENTRY, messageEntries, heldItems, permissionCard, allowEditor });
+    Object.assign(globalThis.__factoryUiTest, { shownInChat, mdInline, md, rel, dayLabel, gateWait, waitingMembers, gateEntryTurns, pendingPoints, threadCtx, typeBlock, state, NOTIFY_TYPES, GATE_ENTRY, messageEntries, heldItems, permissionCard, allowEditor, offerCard });
     return;
   }
 
