@@ -3101,19 +3101,18 @@ ${sc.body}">${icon('clock', 'xs')}<span class="sched-what">${what}</span>
   }
 
   /** The composer's schedule row: how often to repeat what is written above, then start (or save) it. */
+  /** The composer's main button while the schedule row is open. */
+  const scheduleLabel = (th, every) => (th?.schedule ? 'Save schedule' : CADENCE_RE.test(every || '') ? `Send now, then ${everyText(every)}` : 'Pick how often');
+
+  /** The intervals to repeat at; the composer's main button sets the schedule while this row is open. */
   function scheduleRow(th, d) {
     const every = d.sched.every;
-    const valid = CADENCE_RE.test(every || '');
     const custom = !SCHEDULE_CHOICES.some(([c]) => c === every);
-    const label = th.schedule ? 'Save schedule' : valid ? `Send now, then ${everyText(every)}` : 'Pick how often';
     return html`<div class="sched-row" role="group" aria-label="Repeat this message">
       <span class="sched-k">${icon('clock', 'sm')}Repeat every</span>
-      ${SCHEDULE_CHOICES.map(([c, name]) => html`<button type="button" class="to-chip${every === c ? ' on' : ''}" data-act="sched-every" data-every="${c}" aria-pressed="${String(every === c)}">${name}</button>`)}
+      ${SCHEDULE_CHOICES.map(([c, name]) => html`<button type="button" class="to-chip sched-pick${every === c ? ' on' : ''}" data-act="sched-every" data-every="${c}" aria-pressed="${String(every === c)}">${name}</button>`)}
       <input class="field sched-custom" data-input="sched-every" value="${custom ? every || '' : ''}" placeholder="3h, 2d" aria-label="Another interval, such as 3h or 2d">
-      <span class="sched-go">
-        <button class="btn btn-ghost sm" type="button" data-act="sched-close">Cancel</button>
-        <button class="btn btn-primary sm" type="button" data-act="sched-save"${state.sending || !valid ? raw(' disabled') : ''}>${icon('clock', 'sm')}${label}</button>
-      </span>
+      <button class="icon-btn sched-x" type="button" data-act="sched-close" title="Close without scheduling" aria-label="Close without scheduling">${icon('x', 'sm')}</button>
     </div>`;
   }
 
@@ -3145,8 +3144,13 @@ ${sc.body}">${icon('clock', 'xs')}<span class="sched-what">${what}</span>
       : sc
         ? html`<button class="sched-btn on${sc.paused ? ' paused' : ''}" type="button" data-act="sched-open" aria-expanded="${String(Boolean(d.sched))}" title="This thread repeats a message ${everyText(sc.every)}${sc.paused ? ' (paused)' : `; next ${nextText(sc.next)}`}. Change it">${icon('clock', 'sm')}${sc.paused ? 'Paused' : everyShort(sc.every)}</button>`
         : html`<button class="sched-btn" type="button" data-act="sched-open" aria-expanded="${String(Boolean(d.sched))}" title="Repeat a message on this thread on a schedule. Nothing is scheduled here yet">${icon('clock', 'sm')}Schedule</button>`;
-    return html`<span class="c-hint"><kbd>${IS_MAC ? '⌘' : 'Ctrl'}</kbd> <kbd>Enter</kbd> to ${d.sched ? 'schedule' : 'send'} · Markdown works · drop or paste an image${nobody ? html` · <span class="c-warn">pick who to send it to</span>` : ''}${notify ? html` · <span title="Questions, answers, notes, escalations, events, alerts and reports addressed to you close on your next post, review or decision in the thread; an agent whose question your message left open asks again">sending closes ${plural(notify, 'turn')} waiting on you</span>` : ''}</span>
-      ${clockBtn}<button class="btn btn-primary" type="button" data-act="send"${state.sending ? raw(' disabled') : ''}>${icon('send', 'sm')}${label}</button>`;
+    // One main button: while the schedule row is open it sets the schedule instead of sending.
+    const scheduling = Boolean(d.sched) && th.kind !== 'watch';
+    const action = scheduling
+      ? html`<button class="btn btn-primary" type="button" data-act="sched-save"${state.sending || !CADENCE_RE.test(d.sched.every || '') ? raw(' disabled') : ''}>${icon('clock', 'sm')}${scheduleLabel(th, d.sched.every)}</button>`
+      : html`<button class="btn btn-primary" type="button" data-act="send"${state.sending ? raw(' disabled') : ''}>${icon('send', 'sm')}${label}</button>`;
+    return html`<span class="c-hint"><kbd>${IS_MAC ? '⌘' : 'Ctrl'}</kbd> <kbd>Enter</kbd> to ${scheduling ? 'schedule' : 'send'} · Markdown works · drop or paste an image${nobody ? html` · <span class="c-warn">pick who to send it to</span>` : ''}${notify && !scheduling ? html` · <span title="Questions, answers, notes, escalations, events, alerts and reports addressed to you close on your next post, review or decision in the thread; an agent whose question your message left open asks again">sending closes ${plural(notify, 'turn')} waiting on you</span>` : ''}</span>
+      ${clockBtn}${action}`;
   }
 
   /** Start or change the thread's schedule from the composer: the text above, to whoever it would go to. */
@@ -3848,7 +3852,7 @@ ${sc.body}">${icon('clock', 'xs')}<span class="sched-what">${what}</span>
       const btn = document.querySelector('[data-act="sched-save"]');
       if (btn) {
         btn.disabled = !ok || state.sending;
-        btn.lastChild.textContent = state.thread?.thread?.schedule ? 'Save schedule' : ok ? `Send now, then ${everyText(d.sched.every)}` : 'Pick how often';
+        btn.lastChild.textContent = scheduleLabel(state.thread?.thread, d.sched.every);
       }
       document.querySelectorAll('[data-act="sched-every"]').forEach((b) => {
         b.classList.toggle('on', b.dataset.every === d.sched.every);

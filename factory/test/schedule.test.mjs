@@ -287,9 +287,14 @@ test('board: the clock beside Send, the schedule row, the header chip, the sideb
   d.sched = { every: '5h' };
   const row = String(hooks.scheduleRow(v.thread, d));
   assert.match(row, /data-act="sched-every" data-every="5h" aria-pressed="true"/);
-  assert.match(row, /Send now, then every 5 hours/);
+  assert.match(row, /data-act="sched-close"/);
+  assert.doesNotMatch(row, /btn-primary/, 'the row has no button of its own beside the composer\'s');
+  // While the row is open, the composer's one main button sets the schedule instead of sending.
+  const openFoot = String(hooks.composerFoot(v, d));
+  assert.match(openFoot, /<button class="btn btn-primary" type="button" data-act="sched-save">[\s\S]*?Send now, then every 5 hours<\/button>/);
+  assert.doesNotMatch(openFoot, /data-act="send"/);
   d.sched = { every: '3x' };
-  assert.match(String(hooks.scheduleRow(v.thread, d)), /data-act="sched-save" disabled[^>]*>[\s\S]*Pick how often/);
+  assert.match(String(hooks.composerFoot(v, d)), /data-act="sched-save" disabled[^>]*>[\s\S]*Pick how often/);
 
   // Scheduled and sent once.
   store.setSchedule({ as: 'you', ref: SOLO, every: '5h', body: 'Triage now.' });
@@ -303,7 +308,7 @@ test('board: the clock beside Send, the schedule row, the header chip, the sideb
   assert.match(chip, /data-act="sched-clear-ask">Cancel</);
   assert.match(String(hooks.composerFoot(v, hooks.draft(SOLO))), /<button class="sched-btn on" [^>]*>[\s\S]*?Every 5h<\/button>/);
   d.sched = { every: '5h' };
-  assert.match(String(hooks.scheduleRow(v.thread, d)), />Save schedule</);
+  assert.match(String(hooks.composerFoot(v, d)), />Save schedule<\/button>/);
   hooks.state.confirmSched = SOLO;
   assert.match(String(hooks.scheduleChip(v)), /data-act="sched-keep">Keep<\/button><button type="button" class="sched-a danger" data-act="sched-clear">Cancel it</);
   hooks.state.confirmSched = null;
