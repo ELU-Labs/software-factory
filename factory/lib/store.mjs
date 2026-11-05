@@ -64,7 +64,7 @@ export const ISSUE_STATUSES = Object.freeze(['open', 'accepted', 'rejected', 'de
 /** Thread kinds. */
 export const THREAD_KINDS = Object.freeze(['project', 'watch', 'solo']);
 /** Kinds of automatic `event` messages. */
-export const EVENT_KINDS = Object.freeze(['thread_created', 'section_updated', 'thread_config', 'phase', 'gate', 'task_created', 'task_status', 'task_updated', 'issue_created', 'issue_status', 'decision', 'watch_run', 'watch_state', 'permission_denied', 'eta', 'merged']);
+export const EVENT_KINDS = Object.freeze(['thread_created', 'section_updated', 'thread_config', 'phase', 'gate', 'task_created', 'task_status', 'task_updated', 'issue_created', 'issue_status', 'decision', 'watch_run', 'watch_state', 'permission_denied', 'eta', 'merged', 'schedule', 'watch_due']);
 /**
  * Message types whose turns are notifications: no command answers them, so the
  * recipient's next write in that thread closes them (the store adds them to the
@@ -165,6 +165,8 @@ const KIND_NAME = { project: 'project', watch: 'watch', solo: 'single-agent' };
 const TASK_KEYS = ['id', 'title', 'thread', 'status', 'owner', 'issue', 'refs', 'created', 'updated'];
 const ISSUE_KEYS = ['id', 'title', 'thread', 'gate', 'source', 'point', 'severity', 'status', 'raised_by', 'task', 'metric', 'reason', 'created', 'updated'];
 const MESSAGE_KEYS = ['id', 'ts', 'thread', 'from', 'to', 'cc', 'type', 'reply_to', 'resolves', 'refs', 'internal'];
+/** A thread's `schedule` (PROTOCOL §16, "Schedules"): the message the autopilot sends, to whom, how often, and when next. */
+const SCHEDULE_KEYS = ['every', 'to', 'body', 'next', 'paused', 'last'];
 const MEMBER_KEYS = ['id', 'name', 'short', 'kind', 'vendor', 'model', 'role', 'color', 'runs'];
 const ENTITY_ONLY_KEYS = new Set(['body', 'path', 'team', 'summary']);
 const TEAM_DIR_ENTRIES = new Set(['team.md', 'decisions.md', 'metrics.jsonl', 'threads', 'comms', 'tasks', 'issues', 'reports', 'attachments', '.lock']);
@@ -450,6 +452,25 @@ export function cadenceMs(cadence) {
   if (cadence === 'weekly') return 7 * 24 * H;
   const n = Number(cadence.slice(0, -1));
   return cadence.endsWith('h') ? n * H : n * 24 * H;
+}
+
+/** A cadence in words: hourly → "every hour", 5h → "every 5 hours", 1d → "every day". */
+export function everyText(cadence) {
+  const c = String(cadence ?? '');
+  const named = { hourly: 'every hour', daily: 'every day', weekly: 'every week' }[c];
+  if (named) return named;
+  const n = Number(c.slice(0, -1));
+  const unit = c.endsWith('h') ? 'hour' : 'day';
+  return n === 1 ? `every ${unit}` : `every ${n} ${unit}s`;
+}
+
+/**
+ * The first slot after nowMs on a schedule's grid (nextMs + k·period): a machine
+ * that slept through several sends makes one, and the schedule keeps its times.
+ */
+export function nextSlot(nextMs, period, nowMs) {
+  if (nextMs > nowMs) return nextMs;
+  return nextMs + (Math.floor((nowMs - nextMs) / period) + 1) * period;
 }
 
 function stripMarkdown(line) {
@@ -1063,6 +1084,8 @@ function openTurnPairs(msgs, threadMeta) {
       continue;
     }
     for (const id of asArray(r.resolves)) push(resolvedBy, id, r.from);
+    // A message a schedule sent (§16, "Schedules") is not the owner reading the thread: it closes nothing of theirs.
+    if (r.scheduled === true) continue;
     if (r.from === 'you' && String(r.ts) > String(ownerWrote.get(r.thread) || '')) ownerWrote.set(r.thread, String(r.ts));
     const k = `${r.thread}\u0000${r.from}`;
     if (!fromOtherTeam(r) && String(r.ts) > String(wrote.get(k) || '')) wrote.set(k, String(r.ts));
@@ -2203,6 +2226,7 @@ class Store {
             cadence: th.cadence ?? null,
             thresholds: th.thresholds ?? null,
             last_run: th.last_run ?? null,
+            schedule: th.schedule ?? null,
             updated: th.updated,
             eta: th.eta ?? null,
             // When the current phase began: its latest phase event, else the thread's creation.
@@ -2278,6 +2302,193 @@ class Store {
       });
     }
     return out;
+  }
+
+  /** Every thread's schedule, soonest first (PROTOCOL §16, "Schedules"). */
+  schedules() {
+    return this.threads()
+      .filter((th) => isObject(th.schedule))
+      .map((th) => ({ ref: `${th.team}/${th.id}`, title: th.title, kind: th.kind, ...th.schedule }))
+      .sort((a, b) => String(a.next).localeCompare(String(b.next)));
+  }
+
+  _requireScheduleOwner(as) {
+    this._actor(as);
+    if (as !== 'you') {
+      fail('permission', 'only you set a schedule: it sends a message in your name. Ask the owner to set it with the clock beside Send on the board, or `factory schedule set <thread-ref> --every 5h --body "<what to do>" --as you`');
+    }
+  }
+
+  /**
+   * Repeat a message on a single-agent or project thread (PROTOCOL §16,
+   * "Schedules"): the autopilot sends `body` to `to` as your question
+   * `every` (hourly, daily, weekly, <n>h, <n>d), first at `next` (default now).
+   * A single-agent thread's schedule goes to its agent; a project thread's to
+   * its lead unless `to` names others. Setting it again changes it: the next
+   * send keeps its time unless `every` changes. Only you.
+   */
+  setSchedule({ as, ref, every, body, to, next } = {}) {
+    this._requireScheduleOwner(as);
+    const { team, id } = this._resolveThreadRef(ref);
+    if (every == null || !CADENCE_RE.test(String(every))) fail('usage', `--every "${every ?? ''}" is not valid; use hourly, daily, weekly, <n>h or <n>d`);
+    const text = String(body ?? '').trim();
+    if (!text) fail('usage', 'the schedule needs the message it sends: --body <text>, --body-file <path>, or piped stdin');
+    let nextMs = null;
+    if (next != null && next !== '') {
+      nextMs = Date.parse(next);
+      if (!Number.isFinite(nextMs)) fail('usage', `--next "${next}" is not a time; use an ISO time such as 2026-11-05T09:00:00Z`);
+    }
+    return this._op(team, as, (ctx) => {
+      const th = this._loadThread(team, id);
+      const tref = this._refThread(th);
+      if (th.kind === 'watch') fail('usage', `${tref} is a watch thread: it runs on its cadence (${th.cadence}); change that with \`factory thread set ${tref} --cadence <c> --as you\``);
+      this._requireParticipant(as, th, 'schedule here');
+      let recipients;
+      if (th.kind === 'solo') {
+        this._checkSoloRecipients(th, uniq(toList(to)));
+        recipients = [th.owner];
+      } else {
+        recipients = this._requireMembers(uniq(toList(to)), '--to');
+        if (!recipients.length && th.lead && th.lead !== 'you') recipients = [th.lead];
+        if (!recipients.length) fail('usage', `say who it goes to on ${tref}: --to <member>`);
+        const odd = recipients.filter((m) => m === 'you' || m === 'factory');
+        if (odd.length) fail('usage', `a schedule sends your message to agents; it cannot go to ${odd.join(' or ')}`);
+      }
+      const before = isObject(th.schedule) ? th.schedule : null;
+      const cadence = String(every);
+      const period = cadenceMs(cadence);
+      const nowMs = this._nowMs();
+      let nextAt = nowMs;
+      if (nextMs != null) nextAt = nextMs;
+      else if (before && before.every === cadence && isIso(before.next)) nextAt = Date.parse(before.next);
+      else if (before && isIso(before.last)) nextAt = Math.max(nowMs, Date.parse(before.last) + period);
+      const schedule = ordered({ every: cadence, to: recipients, body: text, next: new Date(nextAt).toISOString(), paused: before?.paused === true, last: before?.last ?? null }, SCHEDULE_KEYS);
+      if (before && JSON.stringify(ordered(before, SCHEDULE_KEYS)) === JSON.stringify(schedule)) fail('conflict', `${tref} already has that schedule; nothing changed`);
+      th.schedule = schedule;
+      th.updated = ctx.time;
+      this._saveThread(th);
+      const whom = recipients.map((m) => md.who(m)).join(', ');
+      this._event(ctx, th, 'schedule', { action: before ? 'changed' : 'set', every: cadence, to: recipients, next: schedule.next },
+        `${md.who(as)} ${before ? 'changed the schedule on' : 'scheduled a message on'} ${md.title(th.title)}: to ${whom} ${everyText(cadence)}${schedule.paused ? ' (paused)' : `, next ${schedule.next}`}.`);
+      return { thread: this._loadThread(team, id), schedule };
+    });
+  }
+
+  /** Pause or resume a thread's schedule (only you). A resumed schedule that missed sends picks up at its next time. */
+  setScheduleState({ as, ref, paused } = {}) {
+    this._requireScheduleOwner(as);
+    const { team, id } = this._resolveThreadRef(ref);
+    return this._op(team, as, (ctx) => {
+      const th = this._loadThread(team, id);
+      const tref = this._refThread(th);
+      const s = th.schedule;
+      if (!isObject(s)) fail('not_found', `${tref} has no schedule; set one with \`factory schedule set ${tref} --every <c> --body "<text>" --as you\``);
+      if (Boolean(s.paused) === Boolean(paused)) fail('conflict', `the schedule on ${tref} is already ${paused ? 'paused' : 'running'}`);
+      s.paused = Boolean(paused);
+      const period = cadenceMs(s.every);
+      if (!s.paused && period && isIso(s.next)) s.next = new Date(nextSlot(Date.parse(s.next), period, this._nowMs())).toISOString();
+      th.schedule = ordered(s, SCHEDULE_KEYS);
+      th.updated = ctx.time;
+      this._saveThread(th);
+      this._event(ctx, th, 'schedule', { action: s.paused ? 'paused' : 'resumed', every: s.every, next: s.next },
+        `${md.who(as)} ${s.paused ? 'paused' : 'resumed'} the schedule on ${md.title(th.title)}${s.paused ? '' : `: next ${s.next}`}.`);
+      return { thread: this._loadThread(team, id), schedule: th.schedule };
+    });
+  }
+
+  /** Remove a thread's schedule (only you). A message it already sent stays with its agent. */
+  clearSchedule({ as, ref } = {}) {
+    this._requireScheduleOwner(as);
+    const { team, id } = this._resolveThreadRef(ref);
+    return this._op(team, as, (ctx) => {
+      const th = this._loadThread(team, id);
+      const tref = this._refThread(th);
+      if (!isObject(th.schedule)) fail('not_found', `${tref} has no schedule`);
+      const every = th.schedule.every;
+      delete th.schedule;
+      th.updated = ctx.time;
+      this._saveThread(th);
+      this._event(ctx, th, 'schedule', { action: 'cleared', every }, `${md.who(as)} cancelled the schedule on ${md.title(th.title)}.`);
+      return { thread: this._loadThread(team, id) };
+    });
+  }
+
+  /**
+   * One autopilot pass over the clock (PROTOCOL §16, "Schedules"): send each
+   * schedule whose time has come, as your question, and tell the lead of each
+   * watch thread that came due. One thread's failure (a schedule naming a
+   * member no longer on the roster) leaves the others alone: it is listed in
+   * `failed`. Returns { sent, skipped, due, failed }.
+   */
+  runSchedules() {
+    const sent = [];
+    const skipped = [];
+    const due = [];
+    const failed = [];
+    const nowMs = this._nowMs();
+    for (const th of this.threads()) {
+      const s = th.schedule;
+      if (th.kind === 'watch' || !isObject(s) || s.paused === true || !isIso(s.next) || Date.parse(s.next) > nowMs) continue;
+      const ref = `${th.team}/${th.id}`;
+      try {
+        const r = this._sendSchedule(th.team, th.id);
+        if (r.message) sent.push({ ref, to: r.message.to, message: r.message.id, next: r.next });
+        else if (r.waiting) skipped.push({ ref, waiting: r.waiting, next: r.next });
+      } catch (e) {
+        failed.push({ ref, error: e.message });
+      }
+    }
+    for (const w of this.watchDue()) {
+      try {
+        const r = this._noticeWatchDue(w);
+        if (r.notice) due.push({ ref: w.ref, to: r.notice.to, message: r.notice.id });
+      } catch (e) {
+        failed.push({ ref: w.ref, error: e.message });
+      }
+    }
+    return { sent, skipped, due, failed };
+  }
+
+  /** Send one due schedule, unless the message it sent last still waits on its answer; then move it to its next slot. */
+  _sendSchedule(team, id) {
+    return this._op(team, 'you', () => {
+      const th = this._loadThread(team, id);
+      const s = th.schedule;
+      const nowMs = this._nowMs();
+      const period = isObject(s) ? cadenceMs(s.every) : null;
+      if (!period || s.paused === true || !isIso(s.next) || Date.parse(s.next) > nowMs || th.kind === 'watch') return {};
+      const to = th.kind === 'solo' ? [th.owner] : this._requireMembers(uniq(toList(s.to)), 'schedule.to');
+      // One at a time: an agent still on the last one (a long run, or one that failed) is not sent another.
+      const waiting = openTurnPairs(this._teamMessages(team), this._threadMeta(team))
+        .filter((p) => p.msg.thread === id && p.msg.scheduled === true && to.includes(p.member))
+        .map((p) => p.msg.id);
+      let message = null;
+      if (!waiting.length) {
+        message = this._writeMessage(team, {
+          thread: id, from: 'you', to, cc: [], type: 'question', reply_to: null, resolves: [], refs: [], internal: false,
+          extra: { scheduled: true }, body: s.body,
+        });
+        s.last = message.ts;
+      }
+      s.next = new Date(nextSlot(Date.parse(s.next), period, nowMs)).toISOString();
+      th.schedule = ordered(s, SCHEDULE_KEYS);
+      this._saveThread(th);
+      return message ? { message, next: s.next } : { waiting: uniq(waiting), next: s.next };
+    }, { closeNotices: false });
+  }
+
+  /** Tell a due watch thread's lead to run it: one notice per due period (a run since closes it). */
+  _noticeWatchDue(w) {
+    return this._op(w.team, 'factory', (ctx) => {
+      const th = this._loadThread(w.team, w.thread);
+      if (th.kind !== 'watch' || th.phase !== 'active') return {};
+      const since = String(th.last_run || '');
+      const told = this._teamMessages(w.team).some((m) => m.thread === th.id && m.type === 'event' && m.event?.kind === 'watch_due' && String(m.ts) > since);
+      if (told) return {};
+      const notice = this._event(ctx, th, 'watch_due', { cadence: th.cadence, last_run: th.last_run ?? null, due_at: w.due_at },
+        `${md.title(th.title)} is due (${everyText(th.cadence)}; ${th.last_run ? `last run ${th.last_run}` : 'never run'}): run it.`, { to: [th.lead] });
+      return { notice };
+    }, { closeNotices: false });
   }
 
   /**
@@ -4208,8 +4419,12 @@ class Store {
       th.last_run = runTs;
       th.updated = ctx.time;
       this._saveThread(th);
+      // The notice that told the lead this run was due (§16, "Schedules") is answered by the run.
+      const dueNotices = openTurnPairs(this._teamMessages(team), this._threadMeta(team))
+        .filter((p) => p.msg.thread === id && p.msg.type === 'event' && p.msg.event?.kind === 'watch_due')
+        .map((p) => p.msg.id);
       this._event(ctx, th, 'watch_run', { status, breaches: breaches.map((e) => e.metric), report: reportRel },
-        `${md.who(as)} ran ${md.title(th.title)}: ${md.code(status)}${breaches.length ? ` on ${breaches.map((e) => e.metric).join(', ')}` : ''}.`, { refs: [reportMsg.id] });
+        `${md.who(as)} ran ${md.title(th.title)}: ${md.code(status)}${breaches.length ? ` on ${breaches.map((e) => e.metric).join(', ')}` : ''}.`, { refs: [reportMsg.id], resolves: uniq(dueNotices) });
       const row = this._metricRows(team).filter((r) => r.thread === id).at(-1);
       return {
         run: row,
@@ -4672,6 +4887,20 @@ class Store {
       if (th.last_run != null && !isIso(th.last_run)) E(f, 'last_run must be an ISO timestamp or null');
       if (th.gates != null) W(f, 'watch threads have no gates; set gates: null');
     }
+    if (th.schedule != null) {
+      const sc = th.schedule;
+      if (kind === 'watch') E(f, 'schedule: a watch thread runs on its cadence; remove the schedule');
+      else if (!isObject(sc)) E(f, `schedule must be {${SCHEDULE_KEYS.join(', ')}}`);
+      else {
+        for (const k of Object.keys(sc)) if (!SCHEDULE_KEYS.includes(k)) E(f, `schedule has an unknown key "${k}"; the keys are ${SCHEDULE_KEYS.join(', ')}`);
+        if (typeof sc.every !== 'string' || !CADENCE_RE.test(sc.every)) E(f, `schedule.every "${sc.every}" must be hourly, daily, weekly, <n>h or <n>d`);
+        if (!Array.isArray(sc.to) || !sc.to.length || !sc.to.every((x) => isMember(x) && x !== 'you' && x !== 'factory')) E(f, 'schedule.to must list the agents it goes to (roster ids, not you or factory)');
+        if (typeof sc.body !== 'string' || !sc.body.trim()) E(f, 'schedule.body must be the message it sends');
+        if (!isIso(sc.next)) E(f, 'schedule.next must be an ISO-8601 UTC timestamp');
+        if (typeof sc.paused !== 'boolean') E(f, 'schedule.paused must be true or false');
+        if (sc.last != null && !isIso(sc.last)) E(f, 'schedule.last must be an ISO timestamp or null');
+      }
+    }
   }
 
   _validateMessage(t, m, { E, isMember, allMessages, former = new Map() }) {
@@ -4708,6 +4937,7 @@ class Store {
       }
     }
     if ('dismissed_for' in m && (m.dismissal !== true || !isMember(m.dismissed_for))) E(f, 'dismissed_for goes only on a dismissal and names a roster member');
+    if ('scheduled' in m && (m.scheduled !== true || m.from !== 'you')) E(f, 'scheduled: true goes only on a message from you that a schedule sent');
     if ('dismissed_gate' in m && (m.dismissal !== true || !GATES.includes(m.dismissed_gate))) E(f, `dismissed_gate goes only on a dismissal and is one of ${GATES.join(', ')}`);
     if ('link' in m) {
       const l = m.link;

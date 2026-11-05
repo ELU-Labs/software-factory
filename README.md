@@ -52,6 +52,8 @@ The lead writes the brief and asks you to approve it. After that, answer what th
 
 The board also shows what agent runs cost: per thread in its Details, and today's total beside Running in the sidebar. To step in yourself, **Continue in terminal** in a thread's Details copies the command that resumes an agent's session in Claude Code or Codex.
 
+To repeat a request, click the clock beside **Send**, pick how often (every hour, 5 hours, a day), and the autopilot sends it to the agent on that schedule. The thread header shows when it sends next, with Edit, Pause and Cancel. A watch thread's cadence works the same way: when it is due, the autopilot starts its lead to run it.
+
 A new factory also has a **Triage** thread. Paste a bug report or an error there, and an agent finds the cause and the smallest fix.
 
 Commit `factory/`, `tools/factory-ui/` and `.claude/` if you want them in the repo. `teams/` ignores itself and stays on your machine.

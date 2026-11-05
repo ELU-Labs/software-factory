@@ -175,7 +175,8 @@ Fixes to the Brief or Design are your own tasks:
 
 - Create: `node factory/bin/factory.mjs thread new <team>/<thread> --title "<title>" --kind watch --owner opus-monitor --cadence daily --threshold "error_rate<=0.02" --threshold "success_rate>=0.98" --as fable`
 - Fill `What we watch` (metric, source, unit), `Thresholds` and `Runbook` with `thread edit`.
-- `node factory/bin/factory.mjs watch due`, then spawn the monitor (skill `/factory`, "Monitor").
+- `node factory/bin/factory.mjs watch due`, then spawn the monitor (skill `/factory`, "Monitor"). A `watch_due` event in your inbox means the same: that watch is due, run it.
+- Repeating work on a project or single-agent thread is a schedule the owner sets (the clock beside Send, or `schedule set ... --as you`); you cannot set one, and never add a cron job or timer.
 - On an `alert` or a breach `report`, triage the issue. Any write in the watch thread closes the alert and report turns; if you decide to wait, say so in a `note` there.
   - Needs no change: `node factory/bin/factory.mjs issue reject <issue-ref> --reason "<why>" --as fable` (or `issue defer`). The next breaching run then opens a new issue.
   - Needs a change in the repo: it is fixed on a project thread of the same team in `plan` or later, never on the watch thread (PROTOCOL §12, "Fixing a watch issue"). If none fits, start one, cite the issue and its report in the Brief, and take it through brief, design and design_review while the issue stays `open`:

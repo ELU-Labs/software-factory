@@ -197,6 +197,7 @@
     teamMenu: null,
     confirmArchive: null,
     confirmSkip: null,
+    confirmSched: null,
     /** Whether the rail's Archived list is open, and the archived team being restored. */
     showArchived: LS.get('showArchived', false) === true,
     restoring: null,
@@ -225,7 +226,7 @@
   };
   const draft = (ref) => {
     // `to: null` means "not picked yet": it follows the thread (defaultTo), read when the thread is on screen.
-    if (!drafts.has(ref)) drafts.set(ref, { to: null, body: '', replyTo: null, points: [], error: '' });
+    if (!drafts.has(ref)) drafts.set(ref, { to: null, body: '', replyTo: null, points: [], error: '', sched: null });
     return drafts.get(ref);
   };
 
@@ -366,6 +367,29 @@
   }
   const shortDate = (ts) => new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
   const clock = (ts) => new Date(ts).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+
+  // Schedules (PROTOCOL §16, "Schedules"): a thread repeats one message of yours; the autopilot sends it.
+  /** hourly, daily, weekly, <n>h or <n>d: the cadences the store takes. */
+  const CADENCE_RE = /^(hourly|daily|weekly|[1-9]\d*[hd])$/;
+  /** The intervals the clock offers; another is typed (3h, 2d). */
+  const SCHEDULE_CHOICES = [['1h', 'Hour'], ['5h', '5 hours'], ['12h', '12 hours'], ['daily', 'Day'], ['weekly', 'Week']];
+  /** A cadence in words (everyText in factory/lib/store.mjs): 5h → "every 5 hours", 1d → "every day". */
+  function everyText(c) {
+    const named = { hourly: 'every hour', daily: 'every day', weekly: 'every week' }[c];
+    if (named) return named;
+    if (!CADENCE_RE.test(String(c || ''))) return '';
+    const n = Number(String(c).slice(0, -1));
+    const unit = String(c).endsWith('h') ? 'hour' : 'day';
+    return n === 1 ? `every ${unit}` : `every ${n} ${unit}s`;
+  }
+  /** When a schedule sends next: a time today, else a day and time; past it, the autopilot is about to. */
+  function nextText(ts) {
+    const ms = Date.parse(ts);
+    if (!Number.isFinite(ms)) return '';
+    if (ms <= Date.now()) return 'now';
+    const d = new Date(ms);
+    return d.toDateString() === new Date().toDateString() ? clock(ms) : d.toLocaleString(undefined, { weekday: 'short', hour: '2-digit', minute: '2-digit' });
+  }
   const absTime = (ts) => `${new Date(ts).toLocaleString(undefined, { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' })} · ${ts}`;
 
   // ---- estimates (PROTOCOL §7 and §8, "Estimates") ---------------------------
@@ -1173,7 +1197,7 @@
           const unread = current !== `${t.id}/${th.id}` && isUnread(th);
           return html`<li><a class="titem${current === `${t.id}/${th.id}` ? ' on' : ''}${dim ? ' dim' : ''}${unread ? ' unread' : ''}" href="${threadHash(t.id, th.id)}" title="${th.title}${unread ? ' (new since you last looked)' : ''}">
             <span class="titem-ic">${icon(th.kind === 'watch' ? 'watch' : th.kind === 'solo' ? 'solo' : 'project', 'sm')}</span>
-            <span class="titem-title">${th.title}</span>${unread ? raw('<span class="unread-dot" aria-label="unread"></span>') : ''}
+            <span class="titem-title">${th.title}</span>${th.schedule && !th.schedule.paused ? html`<span class="titem-sched" title="Repeats ${everyText(th.schedule.every)}; next ${nextText(th.schedule.next)}" aria-label="On a schedule">${icon('clock', 'xs')}</span>` : ''}${unread ? raw('<span class="unread-dot" aria-label="unread"></span>') : ''}
             ${phasePill(th, true)}
             ${n ? html`<span title="${mine ? `${plural(mineN, 'item')} waiting on ${focus === 'you' ? 'you' : displayName(focus)}` : `${plural(n, 'open turn')} between agents`}">${count(n, mine ? 'hot' : '')}</span>` : ''}
           </a></li>`;
@@ -2254,6 +2278,7 @@
         <span class="mono branch" title="Branch (build in its worktree: factory worktree ${v.team}/${th.id})">${icon('branch', 'xs')}${th.branch}</span>`}
         <span class="sep">·</span>
         <span title="Members">${avatarStack(th.members || [], 18, 7, th)}</span>
+        ${scheduleChip(v)}
       </div>
       <div class="t-tools">
         <div class="tabs" role="tablist">
@@ -2264,6 +2289,32 @@
         <button class="icon-btn details-btn" type="button" data-act="open-side" title="Details" aria-label="Show details">${icon('panel')}</button>
       </div>
     </header>`;
+  }
+
+  /**
+   * The thread's schedule in its header: how often and when next, with Edit,
+   * Pause or Resume, and Cancel (a second click confirms). A watch thread shows
+   * its cadence instead, which the autopilot keeps by telling its lead when due.
+   */
+  function scheduleChip(v) {
+    const th = v.thread;
+    if (th.kind === 'watch') {
+      if (!th.cadence) return '';
+      const due = th.last_run ? new Date(Date.parse(th.last_run) + cadenceMs(th.cadence)).toISOString() : null;
+      const when = th.phase === 'paused' ? 'paused' : due && nextText(due) !== 'now' ? `next run ${nextText(due)}` : 'due now';
+      return html`<span class="sched-chip" title="This watch runs ${everyText(th.cadence)}: when it is due, the autopilot asks ${displayName(th.lead, th)} to run it">${icon('clock', 'xs')}<span>Runs ${everyText(th.cadence)} · ${when}</span></span>`;
+    }
+    const sc = th.schedule;
+    if (!sc) return '';
+    const sure = state.confirmSched === `${v.team}/${th.id}`;
+    const names = (sc.to || []).map((id) => displayName(id, th)).join(', ');
+    const what = sc.paused ? `Paused · ${everyText(sc.every)}` : `${everyText(sc.every).replace(/^e/, 'E')} · next ${nextText(sc.next)}`;
+    return html`<span class="sched-chip${sc.paused ? ' paused' : ''}" title="Sends to ${names} ${everyText(sc.every)}${sc.last ? `; last sent ${absTime(sc.last)}` : ''}:
+${sc.body}">${icon('clock', 'xs')}<span class="sched-what">${what}</span>
+      ${sure
+        ? html`<button type="button" class="sched-a" data-act="sched-keep">Keep</button><button type="button" class="sched-a danger" data-act="sched-clear">Cancel it</button>`
+        : html`<button type="button" class="sched-a" data-act="sched-edit">Edit</button><button type="button" class="sched-a" data-act="${sc.paused ? 'sched-resume' : 'sched-pause'}">${sc.paused ? 'Resume' : 'Pause'}</button><button type="button" class="sched-a" data-act="sched-clear-ask">Cancel</button>`}
+    </span>`;
   }
 
   /** The Triage thread init creates (TRIAGE_REF in factory/lib/store.mjs), and where its offer's Yes goes. */
@@ -2618,6 +2669,7 @@
           <span class="msg-name">${displayName(m.from, th)}</span>
           <span class="msg-vendor">${vendorLine(mem)}</span>
           ${typeChip(m.type)}
+          ${m.scheduled ? html`<span class="chip sched-tag" title="Sent by this thread's schedule">${icon('clock', 'xs')}scheduled</span>` : ''}
           ${teamLink(m)}
           ${m.internal ? html`<span class="chip internal" title="Lead ↔ builder traffic">${icon('lock', 'xs')}internal</span>` : ''}
           ${recipients(m, th)}
@@ -3044,8 +3096,26 @@
       ${target ? html`<span class="reply-pill">${icon('reply', 'xs')}<span>Replying to ${displayName(target.from, th)} · ${TYPE_LABEL[target.type]}: ${target.summary}</span><button class="icon-btn" type="button" data-act="clear-reply" aria-label="Stop replying">${icon('x', 'xs')}</button></span>` : ''}`;
   }
 
+  /** The composer's schedule row: how often to repeat what is written above, then start (or save) it. */
+  function scheduleRow(th, d) {
+    const every = d.sched.every;
+    const valid = CADENCE_RE.test(every || '');
+    const custom = !SCHEDULE_CHOICES.some(([c]) => c === every);
+    const label = th.schedule ? 'Save schedule' : valid ? `Send now, then ${everyText(every)}` : 'Pick how often';
+    return html`<div class="sched-row" role="group" aria-label="Repeat this message">
+      <span class="sched-k">${icon('clock', 'sm')}Repeat every</span>
+      ${SCHEDULE_CHOICES.map(([c, name]) => html`<button type="button" class="to-chip${every === c ? ' on' : ''}" data-act="sched-every" data-every="${c}" aria-pressed="${String(every === c)}">${name}</button>`)}
+      <input class="field sched-custom" data-input="sched-every" value="${custom ? every || '' : ''}" placeholder="3h, 2d" aria-label="Another interval, such as 3h or 2d">
+      <span class="sched-go">
+        <button class="btn btn-ghost sm" type="button" data-act="sched-close">Cancel</button>
+        <button class="btn btn-primary sm" type="button" data-act="sched-save"${state.sending || !valid ? raw(' disabled') : ''}>${icon('clock', 'sm')}${label}</button>
+      </span>
+    </div>`;
+  }
+
   function composerExtra(th, d) {
     const parts = [];
+    if (d.sched && th.kind !== 'watch') parts.push(scheduleRow(th, d));
     if (ownsGate(th) && d.points.length) {
       parts.push(html`${d.points.map((p, i) => html`<div class="c-row">
         <span class="pn">${String(i + 1)}</span>
@@ -3064,8 +3134,64 @@
     const label = d.replyTo ? 'Send reply' : 'Send';
     const notify = myNotifyTurns(v).length;
     const nobody = !postTo(v.thread, d).length;
-    return html`<span class="c-hint"><kbd>${IS_MAC ? '⌘' : 'Ctrl'}</kbd> <kbd>Enter</kbd> to send · Markdown works · drop or paste an image${nobody ? html` · <span class="c-warn">pick who to send it to</span>` : ''}${notify ? html` · <span title="Questions, answers, notes, escalations, events, alerts and reports addressed to you close on your next post, review or decision in the thread; an agent whose question your message left open asks again">sending closes ${plural(notify, 'turn')} waiting on you</span>` : ''}</span>
-      <button class="btn btn-primary" type="button" data-act="send"${state.sending ? raw(' disabled') : ''}>${icon('send', 'sm')}${label}</button>`;
+    const th = v.thread;
+    const clockBtn = th.kind === 'watch' ? '' : html`<button class="icon-btn sched-btn${th.schedule ? ' on' : ''}" type="button" data-act="sched-open" aria-expanded="${String(Boolean(d.sched))}" title="${th.schedule ? `Repeats ${everyText(th.schedule.every)}${th.schedule.paused ? ' (paused)' : `; next ${nextText(th.schedule.next)}`}. Change it` : 'Repeat this message on a schedule'}" aria-label="Schedule">${icon('clock')}</button>`;
+    return html`<span class="c-hint"><kbd>${IS_MAC ? '⌘' : 'Ctrl'}</kbd> <kbd>Enter</kbd> to ${d.sched ? 'schedule' : 'send'} · Markdown works · drop or paste an image${nobody ? html` · <span class="c-warn">pick who to send it to</span>` : ''}${notify ? html` · <span title="Questions, answers, notes, escalations, events, alerts and reports addressed to you close on your next post, review or decision in the thread; an agent whose question your message left open asks again">sending closes ${plural(notify, 'turn')} waiting on you</span>` : ''}</span>
+      ${clockBtn}<button class="btn btn-primary" type="button" data-act="send"${state.sending ? raw(' disabled') : ''}>${icon('send', 'sm')}${label}</button>`;
+  }
+
+  /** Start or change the thread's schedule from the composer: the text above, to whoever it would go to. */
+  async function saveSchedule() {
+    const v = state.thread;
+    if (!v || state.sending) return;
+    const ref = state.route.ref;
+    const d = draft(ref);
+    const ta = $('#c-body');
+    d.body = ta.value;
+    d.error = '';
+    const had = Boolean(v.thread.schedule);
+    try {
+      if (!d.body.trim()) throw new Error('Write the message to repeat first.');
+      const every = d.sched?.every || '';
+      if (!CADENCE_RE.test(every)) throw new Error('Pick how often: a choice above, or type one such as 3h or 2d.');
+      const to = postTo(v.thread, d);
+      if (!to.length) throw new Error('Pick who to send it to.');
+      state.sending = true;
+      renderComposer(v);
+      await api('/api/schedule', { ref, action: 'set', every, to, body: d.body });
+      Object.assign(d, { body: '', sched: null, error: '' });
+      ta.value = '';
+      autosize(ta);
+      toast(had ? 'Schedule saved' : `Scheduled: sending now, then ${everyText(every)}`);
+    } catch (e) {
+      d.error = e.message;
+    } finally {
+      state.sending = false;
+      if (state.thread && state.route.ref === ref) {
+        clearHtml($('#c-extra'));
+        renderComposer(state.thread);
+      }
+    }
+    await refresh();
+  }
+
+  /** Pause, resume or cancel the thread's schedule (the header chip). */
+  async function scheduleAction(action) {
+    const v = state.thread;
+    if (!v || state.sending) return;
+    const ref = `${v.team}/${v.thread.id}`;
+    state.sending = true;
+    try {
+      await api('/api/schedule', { ref, action });
+      toast({ pause: 'Schedule paused', resume: 'Schedule resumed', clear: 'Schedule cancelled' }[action]);
+      if (action === 'clear') draft(ref).sched = null;
+    } catch (e) {
+      toast(e.message, true);
+    } finally {
+      state.sending = false;
+      state.confirmSched = null;
+    }
+    await refresh();
   }
 
   /** Review points with text, while you own the current gate (they go out only with a verdict). */
@@ -3540,6 +3666,63 @@
       case 'send':
         send('post');
         break;
+      case 'sched-open': {
+        // Opens the row (with the schedule's interval when there is one); a second click closes it.
+        const d = draft(ref);
+        const th = state.thread?.thread;
+        d.sched = d.sched ? null : { every: th?.schedule?.every || '5h' };
+        if (d.sched && th?.schedule && !$('#c-body').value.trim()) {
+          $('#c-body').value = th.schedule.body;
+          autosize($('#c-body'));
+        }
+        clearHtml($('#c-extra'));
+        renderComposer(state.thread);
+        if (d.sched) focusComposer();
+        break;
+      }
+      case 'sched-edit': {
+        const d = draft(ref);
+        const sc = state.thread?.thread?.schedule;
+        if (!sc) break;
+        d.sched = { every: sc.every };
+        $('#c-body').value = sc.body;
+        autosize($('#c-body'));
+        clearHtml($('#c-extra'));
+        renderComposer(state.thread);
+        focusComposer();
+        break;
+      }
+      case 'sched-every': {
+        draft(ref).sched = { every: el.dataset.every };
+        clearHtml($('#c-extra'));
+        renderComposer(state.thread);
+        break;
+      }
+      case 'sched-close':
+        draft(ref).sched = null;
+        clearHtml($('#c-extra'));
+        renderComposer(state.thread);
+        break;
+      case 'sched-save':
+        saveSchedule();
+        break;
+      case 'sched-pause':
+        scheduleAction('pause');
+        break;
+      case 'sched-resume':
+        scheduleAction('resume');
+        break;
+      case 'sched-clear-ask':
+        state.confirmSched = ref;
+        if (state.thread) paint($('#t-head'), threadHead(state.thread));
+        break;
+      case 'sched-keep':
+        state.confirmSched = null;
+        if (state.thread) paint($('#t-head'), threadHead(state.thread));
+        break;
+      case 'sched-clear':
+        scheduleAction('clear');
+        break;
       case 'nf-open':
         if (state.teamMenu) {
           state.teamMenu = null;
@@ -3649,6 +3832,21 @@
 
   document.addEventListener('input', (e) => {
     const el = e.target;
+    if (el.dataset?.input === 'sched-every' && state.route?.ref) {
+      const d = draft(state.route.ref);
+      d.sched = { every: el.value.trim().toLowerCase() };
+      const ok = CADENCE_RE.test(d.sched.every);
+      const btn = document.querySelector('[data-act="sched-save"]');
+      if (btn) {
+        btn.disabled = !ok || state.sending;
+        btn.lastChild.textContent = state.thread?.thread?.schedule ? 'Save schedule' : ok ? `Send now, then ${everyText(d.sched.every)}` : 'Pick how often';
+      }
+      document.querySelectorAll('[data-act="sched-every"]').forEach((b) => {
+        b.classList.toggle('on', b.dataset.every === d.sched.every);
+        b.setAttribute('aria-pressed', String(b.dataset.every === d.sched.every));
+      });
+      return;
+    }
     if (el.dataset?.input === 'diff-note') {
       const x = diffNotes(state.route.ref).find((n) => n.id === el.dataset.id);
       if (x) {
@@ -3831,6 +4029,10 @@
         }
         return;
       }
+      if (state.route?.ref && draft(state.route.ref).sched) {
+        saveSchedule();
+        return;
+      }
       send('post');
       return;
     }
@@ -3889,7 +4091,7 @@
   // factory/test/ui.test.mjs runs this file in a VM with `__factoryUiTest` set:
   // it gets the pure helpers below and the page never starts.
   if (globalThis.__factoryUiTest) {
-    Object.assign(globalThis.__factoryUiTest, { shownInChat, mdInline, md, rel, dayLabel, gateWait, waitingMembers, gateEntryTurns, pendingPoints, threadCtx, typeBlock, state, NOTIFY_TYPES, GATE_ENTRY, messageEntries, heldItems, permissionCard, allowEditor, offerCard, newForm, viewNew, sidePanel, usd, costRow, waitingOnYou, newlyWaiting, notifyWaiting, isUnread, markSeen, railTeams, jumpItems, parseDiff, diffView, notesMessage, notesRequest, threadHead, railRunning });
+    Object.assign(globalThis.__factoryUiTest, { shownInChat, mdInline, md, rel, dayLabel, gateWait, waitingMembers, gateEntryTurns, pendingPoints, threadCtx, typeBlock, state, NOTIFY_TYPES, GATE_ENTRY, messageEntries, heldItems, permissionCard, allowEditor, offerCard, newForm, viewNew, sidePanel, usd, costRow, waitingOnYou, newlyWaiting, notifyWaiting, isUnread, markSeen, railTeams, jumpItems, parseDiff, diffView, notesMessage, notesRequest, threadHead, railRunning, scheduleChip, scheduleRow, composerFoot, everyText, nextText, messageItem, draft });
     return;
   }
 

@@ -12,7 +12,7 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
-  openStore, FactoryError, summary, sectionText, pidAlive, PROJECT_PHASES, REVIEW_GATES, DATA_SOURCE_KEYS, CLI_BOOL_FLAGS, allowRuleRisk, fmtDuration,
+  openStore, FactoryError, summary, sectionText, pidAlive, PROJECT_PHASES, REVIEW_GATES, DATA_SOURCE_KEYS, CLI_BOOL_FLAGS, allowRuleRisk, fmtDuration, everyText,
 } from '../lib/store.mjs';
 import { rolesLines } from '../lib/roles.mjs';
 import { fetchIssue, issueRequest } from '../lib/github-issue.mjs';
@@ -39,7 +39,7 @@ const VALUE_FLAGS = new Set([
   'to', 'cc', 'reply-to', 'resolves', 'refs', 'verdict', 'point', 'points-file', 'review', 'stance', 'stances-file', 'outcome',
   'reason', 'severity', 'source', 'metric', 'action', 'note', 'gate', 'metrics', 'metrics-file', 'from', 'limit', 'status',
   'team', 'phase', 'port', 'host', 'allow-host', 'issue', 'thread', 'clear-threshold', 'eval-cmd', 'grader', 'setup', 'data-source', 'repo-paths',
-  'team-title', 'timeout', 'settle', 'session', 'allow', 'add-allow', 'remove-allow', 'eta', 'from-issue',
+  'team-title', 'timeout', 'settle', 'session', 'allow', 'add-allow', 'remove-allow', 'eta', 'from-issue', 'every', 'next',
 ]);
 const BOOL_FLAGS = CLI_BOOL_FLAGS;
 /** Flags that repeat, each occurrence one more item. */
@@ -612,6 +612,11 @@ const COMMANDS = [
     text: (b, { store }) => boardText(b, store),
   },
   {
+    words: ['schedule', 'list'], usage: 'schedule list', about: 'Every thread\'s schedule, soonest first: what it sends, to whom, how often and when next (PROTOCOL §16, "Schedules").',
+    run: ({ store }) => store.schedules(),
+    text: (xs) => (xs.length ? xs.map((x) => `${pad(x.ref, 32)} ${pad(everyText(x.every), 16)} to ${pad(x.to.join(','), 12)} ${x.paused ? 'paused' : `next ${when(x.next)}`}${x.last ? `, last ${when(x.last)}` : ''}  ${plainText(x.body)}`).join('\n') : 'No schedules. Set one: schedule set <thread-ref> --every 5h --body "<what to do>" --as you'),
+  },
+  {
     words: ['watch', 'due'], usage: 'watch due', about: 'Active watch threads whose cadence says they should run now.',
     run: ({ store }) => store.watchDue(),
     text: (xs) => (xs.length ? xs.map((x) => `${pad(x.ref, 32)} ${pad(x.cadence, 8)} owner ${pad(x.owner, 13)} ${x.last_run ? `last run ${when(x.last_run)}, ${age(x.overdue_seconds)} overdue` : 'never run'}`).join('\n') : 'Nothing is due.'),
@@ -952,6 +957,31 @@ const COMMANDS = [
     about: 'Resume a paused watch thread.', args: ['thread-ref'],
     run: ({ store, as, args }) => store.setWatchState({ as, ref: args[0], state: 'active' }),
     text: (r) => `${r.thread.team}/${r.thread.id} is active.`,
+  },
+  {
+    words: ['schedule', 'set'], usage: 'schedule set <thread-ref> --every <c> [--to a,b] [--next <iso>] [body]', write: true, who: 'you',
+    about: 'Repeat a message on a single-agent or project thread: the autopilot sends it as your question every <c> (hourly, daily, weekly, <n>h, <n>d), first at --next (default now), to the thread\'s agent (a project thread: its lead, or --to). Setting it again changes it. Posts a schedule event.',
+    args: ['thread-ref'], flags: ['every', 'to', 'next'], body: true,
+    run: ({ store, as, args, flags, body }) => store.setSchedule({ as, ref: args[0], every: flags.every, to: flags.to, next: flags.next, body }),
+    text: (r) => `Scheduled on ${r.thread.team}/${r.thread.id}: to ${r.schedule.to.join(', ')} ${everyText(r.schedule.every)}; ${r.schedule.paused ? 'paused' : `next ${when(r.schedule.next)}`}.`,
+  },
+  {
+    words: ['schedule', 'pause'], usage: 'schedule pause <thread-ref>', write: true, who: 'you',
+    about: 'Pause a thread\'s schedule: it sends nothing until resumed.', args: ['thread-ref'],
+    run: ({ store, as, args }) => store.setScheduleState({ as, ref: args[0], paused: true }),
+    text: (r) => `The schedule on ${r.thread.team}/${r.thread.id} is paused.`,
+  },
+  {
+    words: ['schedule', 'resume'], usage: 'schedule resume <thread-ref>', write: true, who: 'you',
+    about: 'Resume a paused schedule at its next slot after now (sends it missed are not made up).', args: ['thread-ref'],
+    run: ({ store, as, args }) => store.setScheduleState({ as, ref: args[0], paused: false }),
+    text: (r) => `The schedule on ${r.thread.team}/${r.thread.id} is running; next ${when(r.schedule.next)}.`,
+  },
+  {
+    words: ['schedule', 'clear'], usage: 'schedule clear <thread-ref>', write: true, who: 'you',
+    about: 'Remove a thread\'s schedule. A message it already sent stays with its agent.', args: ['thread-ref'],
+    run: ({ store, as, args }) => store.clearSchedule({ as, ref: args[0] }),
+    text: (r) => `Cancelled the schedule on ${r.thread.team}/${r.thread.id}.`,
   },
   {
     words: ['ui'], usage: 'ui [--detach] [--open] [--thread <thread-ref>] [--stop [--runs]] [--at-login | --no-at-login] [--port 4477] [--host 127.0.0.1] [--allow-host a,b]',

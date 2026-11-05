@@ -576,7 +576,8 @@ export function deniedIn(result) {
  * the brief or the reviewer approves design_review.
  */
 export function decide({ turns, mstate, presence, nowMs, settleMs = SETTLE_MS, maxRuns = MAX_RUNS_PER_HOUR, maxParallel = MAX_PARALLEL_RUNS }) {
-  const work = turns.filter((t) => !NOTICE_TYPES.includes(t.message.type) || (t.message.kind === 'phase' && LEAD_PHASES.includes(t.message.phase)));
+  // Notices wait for the next run, except a phase the lead works in and a watch thread come due (§16, "Schedules").
+  const work = turns.filter((t) => !NOTICE_TYPES.includes(t.message.type) || (t.message.kind === 'phase' && LEAD_PHASES.includes(t.message.phase)) || t.message.kind === 'watch_due');
   const stuck = new Set(mstate.stuck || []);
   const fresh = work.filter((t) => !stuck.has(t.message.id));
   if (!fresh.length) return { launch: null, reason: work.length ? 'stuck' : 'idle' };
@@ -1032,8 +1033,26 @@ export function startAutopilot({ root, once = false, dryRun = false, settleMs = 
     return out;
   };
 
+  // Why each thread's schedule last failed: logged when it first fails or the reason changes, not every pass.
+  const scheduleFailures = new Map();
   const tick = () => {
     const store = openStore({ root });
+    // The clock first (§16, "Schedules"): what it sends below is a turn this same pass sees.
+    if (!dryRun) {
+      try {
+        const r = store.runSchedules();
+        for (const x of r.sent) log(`schedule on ${x.ref}: sent ${x.message} to ${x.to.join(', ')}; next ${x.next}`);
+        for (const x of r.skipped) log(`schedule on ${x.ref}: ${x.waiting.join(', ')} still waits on its answer, so none sent; next ${x.next}`);
+        for (const x of r.due) log(`${x.ref} is due: told ${x.to.join(', ')}`);
+        for (const x of r.failed) {
+          if (scheduleFailures.get(x.ref) !== x.error) log(`schedule on ${x.ref} failed: ${x.error}`);
+        }
+        scheduleFailures.clear();
+        for (const x of r.failed) scheduleFailures.set(x.ref, x.error);
+      } catch (err) {
+        log(`schedules failed: ${err.message}`);
+      }
+    }
     const presence = store.presence();
     const threads = new Map(store.threads().map((th) => [`${th.team}/${th.id}`, th]));
     for (const [id, l] of Object.entries(launch)) {

@@ -576,6 +576,16 @@ export function startServer({ root, port = 4477, host = '127.0.0.1', allowHosts 
       if (!name) throw new FactoryError('usage', 'name the archived team to restore');
       return store().restoreTeam({ as: 'you', name });
     },
+    // A thread's schedule (the clock beside Send): set or change it, pause, resume or cancel it.
+    '/api/schedule': (b) => {
+      const s = store();
+      const ref = str(b.ref);
+      const action = str(b.action) || 'set';
+      if (action === 'set') return s.setSchedule({ as: 'you', ref, every: str(b.every), to: list(b.to), body: b.body == null ? '' : String(b.body) });
+      if (action === 'pause' || action === 'resume') return s.setScheduleState({ as: 'you', ref, paused: action === 'pause' });
+      if (action === 'clear') return s.clearSchedule({ as: 'you', ref });
+      throw new FactoryError('usage', `unknown schedule action "${action}"; use set, pause, resume or clear`);
+    },
     // Close a turn waiting on you without answering it: a hidden note that resolves just that turn.
     '/api/dismiss': (b) => store().dismiss({ as: 'you', ref: str(b.ref), ids: list(b.ids ?? b.id), member: str(b.member) || undefined }),
     // An image dropped or pasted into the composer: saved beside the team's messages; the reply carries its markdown.

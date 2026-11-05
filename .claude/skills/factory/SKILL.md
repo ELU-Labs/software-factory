@@ -153,7 +153,7 @@ The worktree path and git commands come from `node factory/bin/factory.mjs workt
 
 ## Monitor
 
-When `watch due` lists threads, or the owner asks for a run:
+When `watch due` lists threads, a `watch_due` event is in your inbox, or the owner asks for a run:
 
 - Agent tool with `subagent_type: "monitor"` and `name: "opus-monitor"`, and no `isolation`.
 - `prompt`:

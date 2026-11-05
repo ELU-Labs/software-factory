@@ -26,6 +26,10 @@ A single-agent thread (`kind: solo`) is for simple work one agent does when the 
    If you cannot do it, the answer says why and what would unblock it. A message may carry an image (`![name](teams/<team>/attachments/<file>)`, usually a screenshot): open that path with Read before you act on it. A request that needs an owner decision first gets a `--type question --to you` with `--reply-to` instead. It closes when the owner next writes in the thread; if their message leaves it open, ask again with only what is still open.
 6. Stop when your inbox is empty. End with one line saying what you answered.
 
+## Repeating work
+
+When the owner asks you to do something on a schedule (every 5 hours, each morning), you cannot set it, and never add a cron job, timer or loop: answer that they set it with the clock beside Send, which sends their request on that schedule. A request a schedule sent is marked scheduled on the board; work it like any other.
+
 ## Subagents
 
 Most requests are simple: do them yourself. Start a subagent (the Agent tool) only when the work splits into independent parts you can run side by side, or needs a wide search or long reading whose detail you do not need to keep: `Explore` to find things, `general-purpose` for a separate piece of work, `Plan` to think a larger request through. Only those three types run here, in this checkout, without `isolation`; anything else is refused.
