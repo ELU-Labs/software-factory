@@ -382,6 +382,8 @@
     const unit = String(c).endsWith('h') ? 'hour' : 'day';
     return n === 1 ? `every ${unit}` : `every ${n} ${unit}s`;
   }
+  /** A schedule's interval where room is short: 5h → "Every 5h", 2d → "Every 2d", daily → "Daily". */
+  const everyShort = (c) => ({ hourly: 'Hourly', daily: 'Daily', weekly: 'Weekly' }[c] || `Every ${c}`);
   /** When a schedule sends next: a time today, else a day and time; past it, the autopilot is about to. */
   function nextText(ts) {
     const ms = Date.parse(ts);
@@ -1786,6 +1788,7 @@
           : html`<span class="faint">no tasks</span>`}
         ${openIssues ? html`<span class="iss${th.issues.open ? ' hot' : ''}" title="${th.issues.open} open, ${th.issues.accepted} accepted">${icon('flag', 'xs')}${openIssues}</span>` : ''}
         ${finish ? html`<span class="eta finish" title="${finishTitle(finish)}">ETA ${finishLabel(finish)}${finish.missing.length ? '+' : ''}</span>` : ''}
+        ${th.schedule && !th.schedule.paused ? html`<span class="card-sched" title="Repeats a message ${everyText(th.schedule.every)}; next ${nextText(th.schedule.next)}">${icon('clock', 'xs')}${everyShort(th.schedule.every)}</span>` : ''}
       </div>
       ${waitingFoot(th)}
     </a>`;
@@ -3135,7 +3138,12 @@ ${sc.body}">${icon('clock', 'xs')}<span class="sched-what">${what}</span>
     const notify = myNotifyTurns(v).length;
     const nobody = !postTo(v.thread, d).length;
     const th = v.thread;
-    const clockBtn = th.kind === 'watch' ? '' : html`<button class="icon-btn sched-btn${th.schedule ? ' on' : ''}" type="button" data-act="sched-open" aria-expanded="${String(Boolean(d.sched))}" title="${th.schedule ? `Repeats ${everyText(th.schedule.every)}${th.schedule.paused ? ' (paused)' : `; next ${nextText(th.schedule.next)}`}. Change it` : 'Repeat this message on a schedule'}" aria-label="Schedule">${icon('clock')}</button>`;
+    const sc = th.schedule;
+    const clockBtn = th.kind === 'watch'
+      ? ''
+      : sc
+        ? html`<button class="sched-btn on${sc.paused ? ' paused' : ''}" type="button" data-act="sched-open" aria-expanded="${String(Boolean(d.sched))}" title="This thread repeats a message ${everyText(sc.every)}${sc.paused ? ' (paused)' : `; next ${nextText(sc.next)}`}. Change it">${icon('clock', 'sm')}${sc.paused ? 'Paused' : everyShort(sc.every)}</button>`
+        : html`<button class="sched-btn" type="button" data-act="sched-open" aria-expanded="${String(Boolean(d.sched))}" title="Repeat a message on this thread on a schedule. Nothing is scheduled here yet">${icon('clock', 'sm')}Schedule</button>`;
     return html`<span class="c-hint"><kbd>${IS_MAC ? '⌘' : 'Ctrl'}</kbd> <kbd>Enter</kbd> to ${d.sched ? 'schedule' : 'send'} · Markdown works · drop or paste an image${nobody ? html` · <span class="c-warn">pick who to send it to</span>` : ''}${notify ? html` · <span title="Questions, answers, notes, escalations, events, alerts and reports addressed to you close on your next post, review or decision in the thread; an agent whose question your message left open asks again">sending closes ${plural(notify, 'turn')} waiting on you</span>` : ''}</span>
       ${clockBtn}<button class="btn btn-primary" type="button" data-act="send"${state.sending ? raw(' disabled') : ''}>${icon('send', 'sm')}${label}</button>`;
   }
@@ -4091,7 +4099,7 @@ ${sc.body}">${icon('clock', 'xs')}<span class="sched-what">${what}</span>
   // factory/test/ui.test.mjs runs this file in a VM with `__factoryUiTest` set:
   // it gets the pure helpers below and the page never starts.
   if (globalThis.__factoryUiTest) {
-    Object.assign(globalThis.__factoryUiTest, { shownInChat, mdInline, md, rel, dayLabel, gateWait, waitingMembers, gateEntryTurns, pendingPoints, threadCtx, typeBlock, state, NOTIFY_TYPES, GATE_ENTRY, messageEntries, heldItems, permissionCard, allowEditor, offerCard, newForm, viewNew, sidePanel, usd, costRow, waitingOnYou, newlyWaiting, notifyWaiting, isUnread, markSeen, railTeams, jumpItems, parseDiff, diffView, notesMessage, notesRequest, threadHead, railRunning, scheduleChip, scheduleRow, composerFoot, everyText, nextText, messageItem, draft });
+    Object.assign(globalThis.__factoryUiTest, { shownInChat, mdInline, md, rel, dayLabel, gateWait, waitingMembers, gateEntryTurns, pendingPoints, threadCtx, typeBlock, state, NOTIFY_TYPES, GATE_ENTRY, messageEntries, heldItems, permissionCard, allowEditor, offerCard, newForm, viewNew, sidePanel, usd, costRow, waitingOnYou, newlyWaiting, notifyWaiting, isUnread, markSeen, railTeams, jumpItems, parseDiff, diffView, notesMessage, notesRequest, threadHead, railRunning, scheduleChip, scheduleRow, composerFoot, everyText, everyShort, nextText, messageItem, draft, threadCard });
     return;
   }
 

@@ -279,7 +279,10 @@ test('board: the clock beside Send, the schedule row, the header chip, the sideb
   let v = view();
   hooks.state.route = { view: 'thread', ref: SOLO, tab: 'chat' };
   const d = hooks.draft(SOLO);
-  assert.match(String(hooks.composerFoot(v, d)), /<button class="icon-btn sched-btn" type="button" data-act="sched-open" aria-expanded="false" title="Repeat this message on a schedule"/);
+  // Nothing scheduled: a plain Schedule button, never the lit pill a scheduled thread shows.
+  const plainFoot = String(hooks.composerFoot(v, d));
+  assert.match(plainFoot, /<button class="sched-btn" type="button" data-act="sched-open" aria-expanded="false" title="[^"]*Nothing is scheduled here yet">[\s\S]*?Schedule<\/button>/);
+  assert.doesNotMatch(plainFoot, /sched-btn on/);
   assert.equal(String(hooks.scheduleChip(v)), '');
   d.sched = { every: '5h' };
   const row = String(hooks.scheduleRow(v.thread, d));
@@ -298,7 +301,7 @@ test('board: the clock beside Send, the schedule row, the header chip, the sideb
   assert.match(chip, /data-act="sched-edit">Edit</);
   assert.match(chip, /data-act="sched-pause">Pause</);
   assert.match(chip, /data-act="sched-clear-ask">Cancel</);
-  assert.match(String(hooks.composerFoot(v, hooks.draft(SOLO))), /class="icon-btn sched-btn on"/);
+  assert.match(String(hooks.composerFoot(v, hooks.draft(SOLO))), /<button class="sched-btn on" [^>]*>[\s\S]*?Every 5h<\/button>/);
   d.sched = { every: '5h' };
   assert.match(String(hooks.scheduleRow(v.thread, d)), />Save schedule</);
   hooks.state.confirmSched = SOLO;
@@ -313,8 +316,19 @@ test('board: the clock beside Send, the schedule row, the header chip, the sideb
   store.setScheduleState({ as: 'you', ref: SOLO, paused: true });
   v = view();
   assert.match(String(hooks.scheduleChip(v)), /class="sched-chip paused"[\s\S]*Paused · every 5 hours[\s\S]*data-act="sched-resume">Resume</);
+  assert.match(String(hooks.composerFoot(v, hooks.draft(SOLO))), /<button class="sched-btn on paused" [^>]*>[\s\S]*?Paused<\/button>/);
   hooks.state.board = JSON.parse(JSON.stringify(store.board()));
   assert.doesNotMatch(String(hooks.railTeams()), /titem-sched/, 'a paused schedule shows no clock in the sidebar');
+
+  // A project thread's card on the Board says it is on a schedule.
+  store.createThread({ as: 'fable', ref: 'web/retry', title: 'Retry payments', kind: 'project' });
+  store.setSchedule({ as: 'you', ref: 'web/retry', every: 'daily', body: 'Post where it stands.' });
+  hooks.state.board = JSON.parse(JSON.stringify(store.board()));
+  const card = (ref) => String(hooks.threadCard(hooks.state.board.teams.flatMap((x) => x.threads).find((x) => `${x.team}/${x.id}` === ref)));
+  assert.match(card('web/retry'), /class="card-sched"[^>]*>[\s\S]*?Daily<\/span>/);
+  store.createThread({ as: 'fable', ref: 'web/other', title: 'Other', kind: 'project' });
+  hooks.state.board = JSON.parse(JSON.stringify(store.board()));
+  assert.doesNotMatch(card('web/other'), /card-sched/);
 
   // A watch thread: its cadence instead, and no clock beside Send.
   store.createThread({ as: 'fable', ref: 'ops/health', title: 'Health', kind: 'watch', owner: 'opus-monitor', cadence: 'daily', thresholds: { error_rate: { max: 0.02 } } });

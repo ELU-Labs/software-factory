@@ -1110,8 +1110,12 @@ a.turn-more { color: inherit; text-decoration: underline; text-underline-offset:
 .c-error:empty { display: none; }
 
 /* Schedules: the clock beside Send, its row, the header chip, the sidebar clock, the scheduled tag */
-.sched-btn.on { color: var(--brand-ink); }
-.sched-btn[aria-expanded="true"] { background: var(--hover); color: var(--text); }
+.sched-btn { flex: none; display: inline-flex; align-items: center; gap: 5px; height: 30px; padding: 0 10px; border-radius: var(--r-pill); border: 1px solid transparent; background: transparent; color: var(--text-faint); font: 500 12.5px/1 var(--font); cursor: pointer; }
+.sched-btn:hover { background: var(--hover); color: var(--text); }
+.sched-btn.on { color: var(--brand-ink); border-color: color-mix(in srgb, var(--brand) 45%, var(--border)); background: color-mix(in srgb, var(--brand) 12%, transparent); }
+.sched-btn.on.paused { color: var(--text-muted); border-color: var(--border); background: var(--raised); }
+.sched-btn[aria-expanded="true"] { box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 14%, transparent); }
+.card-sched { display: inline-flex; align-items: center; gap: 3px; color: var(--brand-ink); font: 500 11px/1 var(--mono); }
 .sched-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .sched-k { display: inline-flex; align-items: center; gap: 5px; margin-right: 2px; font-size: 12.5px; color: var(--text-muted); }
 .sched-row .field.sched-custom { width: 78px; height: 28px; padding: 0 9px; font-size: 12.5px; }
@@ -1123,8 +1127,7 @@ a.turn-more { color: inherit; text-decoration: underline; text-underline-offset:
 .sched-a { flex: none; padding: 2px 6px; border: 0; border-radius: var(--r-pill); background: transparent; color: var(--text-faint); font: inherit; cursor: pointer; }
 .sched-a:hover { background: var(--hover); color: var(--text); }
 .sched-a.danger { color: var(--danger); }
-.titem-sched { display: inline-flex; flex: none; color: var(--text-faint); }
-.titem.on .titem-sched { color: var(--brand-ink); }
+.titem-sched { display: inline-flex; flex: none; color: var(--brand-ink); }
 .chip.sched-tag { background: transparent; color: var(--text-faint); }
 
 /* right panel */
