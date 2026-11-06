@@ -500,7 +500,8 @@ function launchOf(m) {
  *
  * Codex (openai): the workspace-write sandbox with network on, so it can run the
  * factory CLI and read code but has no GitHub sign-in (fable posts its PR
- * comments). Runs ignore ~/.codex/config.toml, so none of the owner's MCP
+ * comments). gcloud's configuration folder is writable too, so gcloud runs with
+ * the owner's sign-in. Runs ignore ~/.codex/config.toml, so none of the owner's MCP
  * servers or plugins load; model and effort as codexModel says.
  *
  * Claude (a single-agent thread's agent): `claude -p` with the member's model
@@ -543,11 +544,27 @@ export function launchers(root, env = process.env) {
   return out;
 }
 
+/**
+ * gcloud's configuration folder. gcloud writes its credential and token
+ * databases and its logs there on every command, so a sandbox that can only
+ * read it fails before any API call ("Unable to create private file
+ * credentials.db").
+ */
+export const gcloudConfigDir = (env = process.env) => env.CLOUDSDK_CONFIG || path.join(os.homedir(), '.config', 'gcloud');
+
 function codexLauncher(root, env, codex, id) {
   const common = (picked) => {
     const { model: roster, effort } = codexModel(env, root, id);
     const model = picked || roster;
-    return ['--ignore-user-config', '-c', 'sandbox_workspace_write.network_access=true', ...(model ? ['-m', model] : []), ...(effort ? ['-c', `model_reasoning_effort="${effort}"`] : [])];
+    const gcloud = gcloudConfigDir(env);
+    return [
+      '--ignore-user-config',
+      '-c', 'sandbox_workspace_write.network_access=true',
+      // The owner's gcloud sign-in, so a run can make the reads a thread approved (e.g. a host over IAP SSH).
+      ...(fs.existsSync(gcloud) ? ['-c', `sandbox_workspace_write.writable_roots=[${JSON.stringify(gcloud)}]`] : []),
+      ...(model ? ['-m', model] : []),
+      ...(effort ? ['-c', `model_reasoning_effort="${effort}"`] : []),
+    ];
   };
   return {
     kind: 'codex',

@@ -123,7 +123,8 @@ test('turns on two threads start two runs side by side, each with its own sessio
 test('--once starts one sandboxed Codex run per thread; the run answers and the state says so', async (t) => {
   const { root, q } = await questionToOpenai(t);
   const fake = fakeCodex();
-  const r = runCli(['autopilot', '--once', '--settle', '0s', '--json'], { root, env: fake.env('answer') });
+  const gcloud = makeTempDir('factory-gcloud-config-');
+  const r = runCli(['autopilot', '--once', '--settle', '0s', '--json'], { root, env: { ...fake.env('answer'), CLOUDSDK_CONFIG: gcloud } });
   assertExit(r, 0);
 
   const [argv] = fake.argvs();
@@ -132,6 +133,7 @@ test('--once starts one sandboxed Codex run per thread; the run answers and the 
   assert.ok(argv.includes('--ignore-user-config'), 'none of the owner\'s MCP servers or plugins load');
   assert.deepEqual(argv.slice(argv.indexOf('--cd'), argv.indexOf('--cd') + 4), ['--cd', root, '-s', 'workspace-write']);
   assert.ok(argv.includes('sandbox_workspace_write.network_access=true'));
+  assert.ok(argv.includes(`sandbox_workspace_write.writable_roots=[${JSON.stringify(gcloud)}]`), 'gcloud can write its sign-in and token databases');
   assert.ok(argv.includes('model_reasoning_effort="high"'), 'effort comes from $FACTORY_CODEX_EFFORT first');
   assert.equal(argv.at(-1), kickoffPrompt('openai', REF, { auto: true }));
   assert.match(argv.at(-1), /factory-openai\/SKILL\.md.*thread chat\/quality.*nobody reads it/);
